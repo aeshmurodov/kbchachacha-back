@@ -30,7 +30,7 @@ async def execute(req: web.Request) -> web.Response:
         config.MAIN_WEBHOOK_SECRET_TOKEN,
     ):
         raise aiohttp.web.HTTPNotFound
-    if not secrets.compare_digest(req.match_info["bot_id"], config.BOT_ID):
+    if not secrets.compare_digest(req.match_info["bot_id"], config.BOT_TOKEN):
         raise aiohttp.web.HTTPNotFound
 
     dp: Dispatcher = req.app["dp"]

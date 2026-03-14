@@ -77,3 +77,5 @@ if USE_CUSTOM_API_SERVER:
     CUSTOM_API_SERVER_FILE: str = env.str("CUSTOM_API_SERVER_FILE")
 
 DROP_PREVIOUS_UPDATES: bool = env.bool("DROP_PREVIOUS_UPDATES", False)
+
+MAIN_CHANNEL: str = env.str("MAIN_CHANNEL", None) # Например: @my_channel или -1001234567
