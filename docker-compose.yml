@@ -1,19 +1,36 @@
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:15
+    restart: always
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
+      POSTGRES_PASSWORD: your_secure_password
       POSTGRES_DB: aiogram_bot
-    ports:
-      - "5432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./postgres_data:/var/lib/postgresql/data
 
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:7
+    restart: always
 
-volumes:
-  pgdata:
+  backend:
+    build: ./backend # Путь к вашей папке с Python кодом
+    restart: always
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    # Порт 8080 будет доступен внутри сети docker для Nginx
+
+  nginx:
+    image: nginx:latest
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - backend 
