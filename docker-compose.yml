@@ -14,7 +14,7 @@ services:
     restart: always
 
   backend:
-    build: ./backend # Путь к вашей папке с Python кодом
+    build: . # Путь к вашей папке с Python кодом
     restart: always
     env_file: .env
     depends_on:
