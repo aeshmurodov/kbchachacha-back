@@ -338,6 +338,14 @@ async def check_updates(bot: Bot, db_pool, session: aiohttp.ClientSession):
                             # Если бот упал, пробуем отправить это же авто следующим ботом
                             bot_index += 1
                     continue
+                if new_cars and not sendable_new_cars:
+                    logger.info(
+                        "KB new cars filtered out by cutoff",
+                        watch_id=watch_id,
+                        user_id=watch["user_id"],
+                        new_cars_count=len(new_cars),
+                        cutoff_hours=48,
+                    )
         except Exception as e:
             logger.exception("KB check failed", error=str(e))
             await notify_admins_about_error(bot, db_pool, f"Критическая ошибка планировщика: {str(e)}")

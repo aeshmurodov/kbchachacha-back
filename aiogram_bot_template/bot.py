@@ -468,7 +468,9 @@ def main() -> None:
                 try:
                     await check_updates(bot, pool, session)
                 except Exception as e:
-                    pass
+                    logger = dp.get("business_logger")
+                    if logger:
+                        logger.exception("Scheduled KB check failed", error=str(e))
                 # Даем немного времени на закрытие соединений внутри контекста
                 await asyncio.sleep(1)
 
