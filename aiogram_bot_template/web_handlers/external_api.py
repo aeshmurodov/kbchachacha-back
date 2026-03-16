@@ -1,7 +1,7 @@
 from aiohttp import web
 import orjson
 from aiogram import Bot
-from aiogram_bot_template.utils.auth import verify_password, hash_password, create_token # Убедитесь, что функции импортированы
+from aiogram_bot_template.utils.auth import verify_password, hash_password, create_token
 from aiogram_bot_template.utils.kb_api import convert_list_to_api, fetch_cars
 from aiogram_bot_template.db.db_api.watches import WatchesRepo
 from datetime import datetime
@@ -126,14 +126,12 @@ async def change_password_handler(request: web.Request):
 async def get_channels_handler(request: web.Request):
     db_pool = request.app["db_pool"]
     async with db_pool.acquire() as conn:
-        # Важно: в Postgres boolean возвращается как True/False, 
-        # aiohttp автоматически сконвертирует это в JSON true/false
         rows = await conn.fetch("""
             SELECT id, title, username, chat_id as "chatId", is_default as "isDefault" 
             FROM channels 
             ORDER BY is_default DESC, id ASC
         """)
-        return json_response([dict(r) for r in rows])
+        return json_response([{**dict(r), "id": str(r["id"])} for r in rows])
 
 
 @routes.post("/channels")
@@ -155,9 +153,55 @@ async def create_channel_handler(request: web.Request):
                 RETURNING id, title, username, chat_id as "chatId", is_default as "isDefault"
             """, chat.title, f"@{chat.username}" if chat.username else "private", str(chat.id))
             
-            return json_response(dict(row))
+            row_dict = dict(row)
+            row_dict["id"] = str(row_dict["id"])
+            return json_response(row_dict)
     except Exception as e:
         return json_response({"error": f"ID/Username не найден: {str(e)}"}, status=400)
+
+@routes.delete("/channels/{id}")
+async def delete_channel_handler(request: web.Request):
+    try:
+        channel_id = int(request.match_info['id'])
+        db_pool = request.app["db_pool"]
+        
+        async with db_pool.acquire() as conn:
+            result = await conn.execute("DELETE FROM channels WHERE id = $1", channel_id)
+            if "DELETE 0" in result:
+                return json_response({"error": "Channel not found"}, status=404)
+        return json_response({"status": "deleted"})
+    except Exception as e:
+        return json_response({"error": str(e)}, status=500)
+
+@routes.patch("/channels/{id}/default")
+async def set_default_channel_handler(request: web.Request):
+    try:
+        channel_id = int(request.match_info['id'])
+        db_pool = request.app["db_pool"]
+        
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute("UPDATE channels SET is_default = FALSE")
+                result = await conn.execute("UPDATE channels SET is_default = TRUE WHERE id = $1", channel_id)
+                if "UPDATE 0" in result:
+                    return json_response({"error": "Channel not found"}, status=404)
+        return json_response({"status": "ok"})
+    except Exception as e:
+        return json_response({"error": str(e)}, status=500)
+
+@routes.post("/channels/verify")
+async def verify_channel_handler(request: web.Request):
+    data = await request.json()
+    chat_id = data.get("chat_id")
+    bot: Bot = request.app["bot"]
+    try:
+        chat = await bot.get_chat(chat_id)
+        return json_response({
+            "title": chat.title,
+            "username": f"@{chat.username}" if chat.username else "private"
+        })
+    except Exception as e:
+        return json_response({"error": str(e)}, status=400)
 
 # --- BOTS ---
 @routes.get("/bots")
@@ -183,6 +227,8 @@ async def get_bots_handler(request: web.Request):
             
             # Для фронтенда добавим статус доступа (verified), если бот активен
             for b in bots:
+                b["id"] = str(b["id"])
+                b["channelId"] = str(b["channelId"]) if b.get("channelId") else None
                 b["accessStatus"] = "verified" if b.get("isActive") else "no_access"
                 
             return json_response(bots)
@@ -216,7 +262,10 @@ async def add_bot_handler(request: web.Request):
                 RETURNING id, name, token, username, channel_id as "channelId"
             """, name, token, official_username, int(channel_id) if channel_id else None)
             
-            return json_response(dict(row))
+            row_dict = dict(row)
+            row_dict["id"] = str(row_dict["id"])
+            row_dict["channelId"] = str(row_dict["channelId"]) if row_dict.get("channelId") else None
+            return json_response(row_dict)
     except Exception as e:
         return json_response({"error": f"Invalid Bot Token: {str(e)}"}, status=400)
 
@@ -261,6 +310,7 @@ async def get_watchers_handler(request: web.Request):
         watchers = []
         for r in rows:
             d = dict(r)
+            d["id"] = str(d["id"])
             d["status"] = "running" if d.pop("is_active") else "stopped"
             d["verificationStatus"] = "verified"
             # КРИТИЧНО: Превращаем в строку для фронтенда
@@ -301,7 +351,7 @@ async def add_watch_handler(request: web.Request):
         """, [(watch_id, str(c.get("carHistorySeq") or "0"), str(c["carSeq"])) for c in api_data["list"]])
 
     return json_response({
-        "id": watch_id,
+        "id": str(watch_id),
         "name": name,
         "sourceUrl": list_url,
         "generatedUrl": api_url,
@@ -330,7 +380,7 @@ async def toggle_watcher_status_handler(request: web.Request):
             if "UPDATE 0" in result:
                 return json_response({"error": "Watcher not found"}, status=404)
 
-        return json_response({"status": "ok", "id": watcher_id, "is_active": is_active})
+        return json_response({"status": "ok", "id": str(watcher_id), "is_active": is_active})
     except Exception as e:
         return json_response({"error": str(e)}, status=500)
 
@@ -349,7 +399,7 @@ async def delete_watcher_handler(request: web.Request):
             if "DELETE 0" in result:
                 return json_response({"error": "Watcher not found"}, status=404)
                 
-        return json_response({"status": "deleted", "id": watcher_id})
+        return json_response({"status": "deleted", "id": str(watcher_id)})
     except Exception as e:
         return json_response({"error": str(e)}, status=500)
 
@@ -404,7 +454,7 @@ async def get_notification_users_handler(request: web.Request):
     db_pool = request.app["db_pool"]
     async with db_pool.acquire() as conn:
         rows = await conn.fetch("SELECT id, name, username as \"telegramUsername\", created_at as \"createdAt\" FROM notification_users")
-        return json_response([dict(r) for r in rows])
+        return json_response([{**dict(r), "id": str(r["id"])} for r in rows])
 
 
 @routes.post("/notification-users")
@@ -429,7 +479,9 @@ async def add_notification_user_handler(request: web.Request):
                 ON CONFLICT (chat_id) DO UPDATE SET name = EXCLUDED.name, username = EXCLUDED.username
                 RETURNING id, name, username as "telegramUsername", created_at as "createdAt"
             """, name, username, chat_id)
-            return json_response(dict(row))
+            row_dict = dict(row)
+            row_dict["id"] = str(row_dict["id"])
+            return json_response(row_dict)
             
     except Exception as e:
         # Если get_chat упал, значит пользователь не начинал диалог с ботом
@@ -446,4 +498,3 @@ async def delete_notification_user_handler(request: web.Request):
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM notification_users WHERE id = $1", user_id)
     return json_response({"status": "deleted"})
-

@@ -1,0 +1,4239 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+.github/
+  workflows/
+    audit.yml
+    codeql-analysis.yml
+aiogram_bot_template/
+  data/
+    __init__.py
+    config.py
+  db/
+    cache/
+      __init__.py
+    db_api/
+      storages/
+        __init__.py
+        base.py
+        postgres.py
+      __init__.py
+      watches.py
+    __init__.py
+  exceptions/
+    __init__.py
+    base.py
+    keyboard_utils.py
+  filters/
+    __init__.py
+    chat_type.py
+    text.py
+  handlers/
+    user/
+      __init__.py
+      start.py
+    __init__.py
+  keyboards/
+    default/
+      __init__.py
+      basic.py
+      consts.py
+    inline/
+      admin/
+        __init__.py
+      user/
+        __init__.py
+      __init__.py
+      callbacks.py
+      consts.py
+    keyboard_utils/
+      __init__.py
+      schema_generator.py
+    __init__.py
+  middlewares/
+    __init__.py
+    logging.py
+  models/
+    __init__.py
+    base.py
+  services/
+    kb_poller.py
+  states/
+    __init__.py
+    user.py
+  utils/
+    __init__.py
+    auth.py
+    chunks.py
+    connect_to_services.py
+    kb_api.py
+    logging.py
+    smart_session.py
+  web_handlers/
+    __init__.py
+    external_api.py
+    tg_updates.py
+  __init__.py
+  bot.py
+infra/
+  scripts/
+    init_project.py
+  systemd/
+    aiogram_bot_template.service
+nginx/
+  conf/
+    default.conf
+.gitignore
+docker-compose.yml
+Dockerfile
+example.env
+LICENSE
+Makefile
+pyproject.toml
+README.md
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path=".github/workflows/audit.yml">
+name: Audit
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches:
+      - 'main'
+      - 'master'
+  push:
+    branches:
+      - 'main'
+      - 'master'
+
+run-name: audit - ${{ github.sha }}
+
+jobs:
+  build:
+    defaults:
+      run:
+        shell: bash
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install poetry
+        run: pipx install poetry
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'poetry'
+          cache-dependency-path: poetry.lock
+
+      - name: Check pyproject.toml
+        id: check_pyproject
+        run: |
+          poetry check --lock --strict
+
+      - name: Install dependencies
+        id: install_deps
+        run: |
+          poetry sync --with dev
+
+      - name: Ruff check
+        run: poetry run python -m ruff check aiogram_bot_template --config pyproject.toml --output-format=github
+
+      - name: Mypy check
+        run: poetry run python -m mypy aiogram_bot_template --config-file pyproject.toml
+
+      - name: Black check
+        run: poetry run python -m black --check --diff aiogram_bot_template --config pyproject.toml
+
+      - name: Isort check
+        run: poetry run python -m isort --check aiogram_bot_template
+
+      - name: Audit dependencies PyPI
+        id: audit_deps_pypi
+        run: poetry run pip-audit -r <(poetry export -f requirements.txt --with dev --without-hashes) --vulnerability-service pypi --progress-spinner on
+
+      - name: Audit dependencies OSV
+        id: audit_deps_osv
+        run: poetry run pip-audit -r <(poetry export -f requirements.txt --with dev --without-hashes) --vulnerability-service osv --progress-spinner on
+</file>
+
+<file path="aiogram_bot_template/db/db_api/__init__.py">
+
+</file>
+
+<file path="aiogram_bot_template/db/db_api/watches.py">
+import asyncpg
+from typing import List, Dict, Any
+
+class WatchesRepo:
+    def __init__(self, pool: asyncpg.Pool):
+        self.pool = pool
+
+    async def add_watch(self, user_id: int, original_url: str, api_url: str, last_car_seq: str | None) -> int:
+        sql = """
+        INSERT INTO kb_watches (user_id, original_url, api_url, last_car_seq)
+        VALUES ($1, $2, $3, $4)
+        RETURNING id
+        """
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(sql, user_id, original_url, api_url, last_car_seq)
+
+    async def get_active_watches(self) -> List[Dict[str, Any]]:
+        sql = "SELECT * FROM kb_watches WHERE is_active = TRUE"
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql)
+            return [dict(row) for row in rows]
+
+    async def update_last_car_seq(self, watch_id: int, new_seq: str):
+        sql = "UPDATE kb_watches SET last_car_seq = $1 WHERE id = $2"
+        async with self.pool.acquire() as conn:
+            await conn.execute(sql, new_seq, watch_id)
+            
+    async def deactivate_watch(self, watch_id: int):
+        sql = "UPDATE kb_watches SET is_active = FALSE WHERE id = $1"
+        async with self.pool.acquire() as conn:
+            await conn.execute(sql, watch_id)
+
+    async def get_watchers_to_check(self) -> List[Dict[str, Any]]:
+        # Выбираем только активные, где (сейчас - время последнего запуска) >= интервала
+        sql = """
+        SELECT * FROM kb_watches 
+        WHERE is_active = TRUE 
+        AND (
+            last_run_at IS NULL 
+            OR last_run_at <= NOW() - (check_interval || ' seconds')::interval
+        )
+        """
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql)
+            return [dict(row) for row in rows]
+
+    async def update_run_time(self, watch_id: int):
+        sql = "UPDATE kb_watches SET last_run_at = NOW() WHERE id = $1"
+        async with self.pool.acquire() as conn:
+            await conn.execute(sql, watch_id)
+
+    async def get_active_bots(self) -> List[str]:
+        sql = "SELECT token FROM bots_managed WHERE is_active = TRUE"
+        async with self.pool.acquire() as conn:
+            rows = await conn.fetch(sql)
+            return [row['token'] for row in rows]
+            
+    async def get_watch_channel_id(self, watch_id: int) -> str:
+        """Получает Chat ID канала, привязанного к воркеру"""
+        sql = """
+            SELECT c.chat_id 
+            FROM kb_watches w 
+            JOIN channels c ON w.channel_id = c.id 
+            WHERE w.id = $1
+        """
+        async with self.pool.acquire() as conn:
+            return await conn.fetchval(sql, watch_id)
+</file>
+
+<file path="aiogram_bot_template/db/__init__.py">
+
+</file>
+
+<file path="aiogram_bot_template/exceptions/__init__.py">
+from .base import BaseAiogramBotTemplateError as BaseAiogramBotTemplateError
+from .base import DetailedAiogramBotTemplateError as DetailedAiogramBotTemplateError
+from .keyboard_utils import (
+    NotEnoughArgsToCreateButtonError as NotEnoughArgsToCreateButtonError,
+)
+from .keyboard_utils import (
+    PaymentButtonMustBeFirstError as PaymentButtonMustBeFirstError,
+)
+from .keyboard_utils import (
+    TooManyArgsToCreateButtonError as TooManyArgsToCreateButtonError,
+)
+from .keyboard_utils import (
+    UnknownKeyboardButtonPropertyError as UnknownKeyboardButtonPropertyError,
+)
+from .keyboard_utils import WrongKeyboardSchemaError as WrongKeyboardSchemaError
+</file>
+
+<file path="aiogram_bot_template/exceptions/keyboard_utils.py">
+from collections.abc import Sequence
+
+from .base import DetailedAiogramBotTemplateError
+
+
+class UnknownKeyboardButtonPropertyError(DetailedAiogramBotTemplateError):
+    def __init__(
+        self,
+        unknown_property: str,
+        property_value: object,
+        known_properties: Sequence[str],
+    ) -> None:
+        super().__init__(message="Unknown keyboard button property")
+        self.unknown_property = unknown_property
+        self.property_value = property_value
+        self.known_properties = known_properties
+
+
+class NotEnoughArgsToCreateButtonError(DetailedAiogramBotTemplateError):
+    def __init__(
+        self,
+        provided_args: Sequence[str],
+        required_args: Sequence[str],
+    ) -> None:
+        super().__init__(message="Not enough args to create button")
+        self.provided_args = provided_args
+        self.required_args = required_args
+
+
+class TooManyArgsToCreateButtonError(DetailedAiogramBotTemplateError):
+    def __init__(
+        self,
+        provided_args: Sequence[str],
+        max_args_amount: int,
+    ) -> None:
+        super().__init__(message="Too many args to create button")
+        self.provided_args = provided_args
+        self.provided_args_amount = len(self.provided_args)
+        self.max_args_amount = max_args_amount
+
+
+class PaymentButtonMustBeFirstError(DetailedAiogramBotTemplateError):
+    def __init__(self) -> None:
+        super().__init__(message="Payment button must be first in keyboard")
+
+
+class WrongKeyboardSchemaError(DetailedAiogramBotTemplateError):
+    def __init__(self, schema_size: int, buttons_count: int) -> None:
+        super().__init__(message="Schema size not equal to buttons count")
+        self.schema_size = schema_size
+        self.buttons_count = buttons_count
+</file>
+
+<file path="aiogram_bot_template/handlers/__init__.py">
+from . import user as user
+</file>
+
+<file path="aiogram_bot_template/keyboards/default/__init__.py">
+from .basic import BasicButtons as BasicButtons
+</file>
+
+<file path="aiogram_bot_template/keyboards/inline/callbacks.py">
+from aiogram.filters.callback_data import CallbackData
+
+
+class Action(CallbackData, prefix="act"):
+    action: str
+</file>
+
+<file path="aiogram_bot_template/keyboards/__init__.py">
+from . import default as default
+from . import inline as inline
+</file>
+
+<file path="aiogram_bot_template/middlewares/__init__.py">
+from .logging import StructLoggingMiddleware as StructLoggingMiddleware
+</file>
+
+<file path="aiogram_bot_template/models/__init__.py">
+from .base import BaseModel as BaseModel
+</file>
+
+<file path="aiogram_bot_template/services/kb_poller.py">
+import asyncio
+from datetime import datetime, timedelta, timezone
+from aiogram import Bot
+from aiogram.types import InputMediaPhoto
+import aiohttp
+import structlog
+
+from aiogram_bot_template.db.db_api.watches import WatchesRepo
+from aiogram_bot_template.utils.kb_api import fetch_cars
+from aiogram.client.default import DefaultBotProperties
+
+
+logger = structlog.get_logger()
+
+_CHECK_LOCK = asyncio.Lock()
+# Храним экземпляры ботов, чтобы не создавать их каждую секунду
+_BOT_INSTANCES = {}
+
+KST = timezone(timedelta(hours=9))
+
+
+def _kb_image_path(filename: str) -> str | None:
+    if not filename:
+        return None
+
+    car_seq = filename.split("_", maxsplit=1)[0]
+    if len(car_seq) < 4:
+        return None
+
+    mid = car_seq[3]
+    sub = car_seq[:4]
+    mid_folder = "img10" if mid == "0" else f"img0{mid}"
+    return f"/IMG/carimg/l/{mid_folder}/img{sub}/{filename}"
+
+
+def _kb_image_url(filename: str, width: int = 720) -> str | None:
+    path = _kb_image_path(filename)
+    if not path:
+        return None
+    return f"https://img.kbchachacha.com{path}?width={width}"
+
+
+def _get_car_image_urls(car: dict, limit: int = 10) -> list[str]:
+    filenames = car.get("fileNameArray")
+    if not isinstance(filenames, list) or not filenames:
+        return []
+
+    urls: list[str] = []
+    for filename in filenames:
+        if len(urls) >= limit:
+            break
+        if not isinstance(filename, str):
+            continue
+        url = _kb_image_url(filename)
+        if url:
+            urls.append(url)
+    return urls
+
+
+def _parse_order_date(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        # 1. fromisoformat поймет 'Z' в конце и сделает его UTC автоматически
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        
+        # 2. Если зона не указана (как в "2026-02-20 21:49:33"), 
+        # считаем, что это корейское время (KST)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=KST)
+            
+        # 3. Возвращаем всё в UTC для сравнения в коде
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _build_car_message(title: str, car: dict) -> str:
+    price = car.get("sellAmt", "N/A")
+    name = f"{car.get('makerName', '')} {car.get('modelName', '')} {car.get('carName', '')}".strip()
+    grade = car.get("gradeName")
+    yymm = car.get("yymm", "N/A")
+    km = car.get("km", "N/A")
+    city = car.get("cityCodeName2")
+    gas = car.get("gasName")
+    premium_text = car.get("paymentPremiumText")
+    seller_name = car.get("tbMemberMemberName")
+    seller_tel = car.get("safeTel")
+    link = f"https://www.kbchachacha.com/public/car/detail.kbc?carSeq={car['carSeq']}"
+
+    order_dt = _parse_order_date(car.get("orderDate"))
+    if order_dt:
+        # Отображаем время в корейском формате (KST), так привычнее для этого рынка
+        # Или замените на ваш локальный пояс
+        order_date_display = order_dt.astimezone(KST).strftime("%d.%m %H:%M") + " (KST)"
+    else:
+        order_date_display = "Н/Д"
+
+    lines: list[str] = [
+        title,
+        f"<b>{name}</b>",
+    ]
+    if grade:
+        lines.append(str(grade))
+    lines.extend(
+        [
+            f"💰 Цена: {price} KRW",
+            f"📅 Год: {yymm}",
+            f"📟 Пробег: {km}",
+        ]
+    )
+    if city:
+        lines.append(f"📍 Город: {city}")
+    if gas:
+        lines.append(f"⛽ Топливо: {gas}")
+    if order_date_display:
+        lines.append(f"🕒 Дата: {order_date_display}")
+    if premium_text:
+        lines.append(f"📝 {premium_text}")
+    if seller_name or seller_tel:
+        seller_line = "👤 Продавец:"
+        if seller_name:
+            seller_line += f" {seller_name}"
+        if seller_tel:
+            seller_line += f" ({seller_tel})" if seller_name else f" {seller_tel}"
+        lines.append(seller_line)
+
+    lines.append("")
+    lines.append(f"<a href='{link}'>Открыть объявление</a>")
+    return "\n".join(lines)
+
+async def get_bot_instance(token: str) -> Bot:
+    if token not in _BOT_INSTANCES:
+        _BOT_INSTANCES[token] = Bot(
+            token=token, 
+            default=DefaultBotProperties(parse_mode="HTML")
+        )
+    return _BOT_INSTANCES[token]
+
+async def notify_admins_about_error(bot: Bot, db_pool, error_msg: str):
+    """Рассылает уведомление об ошибке всем админам из таблицы notification_users"""
+    async with db_pool.acquire() as conn:
+        admins = await conn.fetch("SELECT chat_id FROM notification_users")
+    
+    for admin in admins:
+        try:
+            await bot.send_message(admin['chat_id'], f"⚠️ <b>ОШИБКА ПАРСЕРА:</b>\n\n<code>{error_msg}</code>")
+        except Exception:
+            pass
+
+async def check_updates(bot: Bot, db_pool, session: aiohttp.ClientSession):
+    async with _CHECK_LOCK:
+        try:
+
+            repo = WatchesRepo(db_pool)
+
+            # Получаем только те, которые пора проверять
+            watches = await repo.get_watchers_to_check()
+            
+            if not watches:
+                return
+
+            # Загружаем всех активных ботов из БД
+            bot_tokens = await repo.get_active_bots()
+            if not bot_tokens:
+                logger.error("No active bots found in DB!")
+                return
+
+            bot_index = 0  # Для Round-Robin внутри одного цикла проверки
+
+            for watch in watches:
+                # Сразу отмечаем время запуска, чтобы другие циклы не подхватили
+                await repo.update_run_time(watch["id"])
+                
+                # Получаем реальный Telegram Chat ID из связанной таблицы каналов
+                # Важно: watch["channel_id"] — это внутренний ID из нашей БД
+                target_chat_id = await repo.get_watch_channel_id(watch["id"])
+                
+                if not target_chat_id:
+                    logger.error(f"Watcher {watch['id']} не привязан к каналу или канал удален")
+                    continue
+
+                data = await fetch_cars(session, watch["api_url"])
+
+                if not data or "list" not in data or not data["list"]:
+                    logger.info(
+                        "KB fetch returned empty",
+                        watch_id=watch["id"],
+                        user_id=watch["user_id"],
+                        url=watch["api_url"],
+                    )
+                    continue
+
+                car_list = data["list"]
+                now = datetime.now(timezone.utc)
+                cutoff = now - timedelta(hours=48)
+
+                car_list = sorted(
+                    car_list,
+                    key=lambda c: (_parse_order_date(c.get("orderDate")) or datetime.min.replace(tzinfo=timezone.utc)),
+                    reverse=True,
+                )
+
+                logger.info(
+                    "KB fetch ok",
+                    watch_id=watch["id"],
+                    user_id=watch["user_id"],
+                    cars_count=len(car_list),
+                )
+
+                watch_id = watch["id"]
+                new_cars: list[dict] = []
+                is_first_run = False
+
+                try:
+                    async with db_pool.acquire(timeout=10) as conn:
+                        logger.info("KB check", watch_id=watch_id)
+
+                        is_first_run = await conn.fetchval(
+                            "SELECT NOT EXISTS (SELECT 1 FROM kb_seen_cars WHERE watch_id = $1)",
+                            watch_id,
+                        )
+
+                        if is_first_run:
+                            await conn.executemany(
+                                """
+                                INSERT INTO kb_seen_cars (watch_id, car_seq, car_history_seq)
+                                VALUES ($1, $2, $3)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                [
+                                    (
+                                        watch_id,
+                                        str(car["carSeq"]),
+                                        str(car.get("carHistorySeq") or car.get("carSeq") or "0"),
+                                    )
+                                    for car in car_list
+                                ],
+                            )
+                            logger.info(
+                                "KB watch seeded (first run, no notifications)",
+                                watch_id=watch_id,
+                                user_id=watch["user_id"],
+                                cars_seeded=len(car_list),
+                            )
+                            continue
+
+                        seen_set = {
+                            row["car_history_seq"]
+                            for row in await conn.fetch(
+                                "SELECT car_history_seq FROM kb_seen_cars WHERE watch_id = $1",
+                                watch_id,
+                            )
+                        }
+                        new_cars = [
+                            car
+                            for car in car_list
+                            if str(car.get("carHistorySeq") or car.get("carSeq") or "0") not in seen_set
+                        ]
+
+                        if new_cars:
+                            await conn.executemany(
+                                """
+                                INSERT INTO kb_seen_cars (watch_id, car_seq, car_history_seq)
+                                VALUES ($1, $2, $3)
+                                ON CONFLICT DO NOTHING
+                                """,
+                                [
+                                    (
+                                        watch_id,
+                                        str(car["carSeq"]),
+                                        str(car.get("carHistorySeq") or car.get("carSeq") or "0"),
+                                    )
+                                    for car in new_cars
+                                ],
+                            )
+                except Exception as e:
+                    logger.exception(
+                        "KB DB step failed",
+                        watch_id=watch_id,
+                        user_id=watch.get("user_id"),
+                        error=str(e),
+                    )
+
+                    await notify_admins_about_error(bot, db_pool, f"Воркер '{watch['name']}' упал: {str(e)}")
+
+                    continue
+
+                if is_first_run:
+                    continue
+
+                sendable_new_cars = [
+                    car
+                    for car in new_cars
+                    if (_parse_order_date(car.get("orderDate")) is None)
+                    or (_parse_order_date(car.get("orderDate")) >= cutoff)
+                ]
+
+                if sendable_new_cars:
+                    logger.info(
+                        "KB new cars found",
+                        watch_id=watch_id,
+                        user_id=watch["user_id"],
+                        new_cars_count=len(sendable_new_cars),
+                    )
+
+                    for car in reversed(sendable_new_cars):
+                        # ВЫБОР БОТА (Round-Robin)
+                        current_token = bot_tokens[bot_index % len(bot_tokens)]
+                        current_bot = await get_bot_instance(current_token)
+                        
+                        try:
+                            msg = _build_car_message("🚗 <b>Новое авто!</b>", car)
+
+                            image_urls = _get_car_image_urls(car, limit=10)
+                            if image_urls:
+                                try:
+                                    media = [InputMediaPhoto(media=url) for url in image_urls]
+                                    await current_bot.send_media_group(chat_id=target_chat_id, media=media)
+                                except Exception as e:
+                                    logger.warning(
+                                        "Failed to send media group",
+                                        watch_id=watch_id,
+                                        car_seq=car.get("carSeq"),
+                                        error=str(e),
+                                    )
+
+                            await current_bot.send_message(chat_id=target_chat_id, text=msg)
+                            logger.info(f"Sent car {car['carSeq']} to channel {target_chat_id}")
+                                
+                            # После успешной отправки ОДНОГО авто этим ботом, переходим к следующему боту
+                            bot_index += 1
+                            await asyncio.sleep(1) # Защита от спама
+                            
+                        except Exception as e:
+
+                            logger.error(f"Bot {current_token[:10]}... failed to send: {e}")
+                            # Если бот упал, пробуем отправить это же авто следующим ботом
+                            bot_index += 1
+                    continue
+        except Exception as e:
+            logger.exception("KB check failed", error=str(e))
+            await notify_admins_about_error(bot, db_pool, f"Критическая ошибка планировщика: {str(e)}")
+</file>
+
+<file path="aiogram_bot_template/states/__init__.py">
+from . import user as user
+</file>
+
+<file path="aiogram_bot_template/states/user.py">
+from aiogram.fsm.state import State, StatesGroup
+
+
+class UserMainMenu(StatesGroup):
+    menu = State()
+</file>
+
+<file path="aiogram_bot_template/utils/auth.py">
+import jwt
+import datetime
+import bcrypt
+
+SECRET_KEY = "YOUR_SUPER_SECRET_KEY" # Вынести в config.py
+
+
+def hash_password(password: str) -> str:
+    """Хеширует пароль с солью."""
+    # bcrypt принимает байты, поэтому кодируем строку
+    pw_bytes = password.encode('utf-8')
+    # Генерируем соль и хешируем
+    salt = bcrypt.gensalt()
+    hashed = bcrypt.hashpw(pw_bytes, salt)
+    # Возвращаем строку для хранения в БД
+    return hashed.decode('utf-8')
+
+def verify_password(password: str, hashed: str) -> bool:
+    """Проверяет соответствие пароля хешу."""
+    try:
+        if not hashed:
+            return False
+        # Проверяем пароль (оба аргумента должны быть байтами)
+        return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+    except Exception as e:
+        print(f"Bcrypt verification error: {e}")
+        return False
+
+def create_token(username: str):
+    payload = {
+        "sub": username,
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+</file>
+
+<file path="aiogram_bot_template/utils/kb_api.py">
+import json
+import time
+import urllib.parse
+from typing import Any
+
+import aiohttp
+import structlog
+
+logger = structlog.get_logger()
+
+def convert_list_to_api(list_url: str, page: int = 1, page_size: int = 30) -> str:
+    base_api = "https://m.kbchachacha.com/public/web/search/infinitySearch.json"
+    
+    parsed = urllib.parse.urlparse(list_url)
+    original_params = dict(urllib.parse.parse_qsl(parsed.query))
+    
+    # Убираем фрагмент (#...), если он есть в URL, часто параметры дублируются там
+    if parsed.fragment:
+        # Простая эвристика, если параметры в фрагменте
+        pass 
+
+    api_params = {
+        "sort": "-paymentPlayYn,-orderDate",
+        "page": str(page),
+        "pageSize": str(page_size),
+        "includeFields": (
+            "carSeq,fileNameArray,ownerYn,makerName,className,carName,"
+            "modelName,gradeName,regiDay,yymm,km,cityCodeName2,"
+            "sellAmtGbn,sellAmt,sellAmtPrev,carMasterSpecialYn,"
+            "monthLeaseAmt,interestFreeYn,ownerYn,directYn,"
+            "carAccidentNo,warrantyYn,falsityYn,kbCertifiedYn" 
+            # Сократил поля для краткости, добавьте остальные при необходимости
+        ),
+        "displaySoldoutYn": "Y",
+        "paymentPremiumYn": "Y",
+        "searchAfter": "",
+        "v": str(int(time.time() * 1000))
+    }
+    
+    final_params = {**original_params, **api_params}
+    return f"{base_api}?{urllib.parse.urlencode(final_params)}"
+
+# Список всех полей, которые вам нужны
+FIELDS = [
+    "carSeq",
+    "fileNameArray",
+    "ownerYn",
+    "makerName",
+    "className",
+    "carName",
+    "modelName",
+    "gradeName",
+    "regiDay",
+    "yymm",
+    "km",
+    "cityCodeName2",
+    "sellAmtGbn",
+    "sellAmt",
+    "sellAmtPrev",
+    "carMasterSpecialYn",
+    "monthLeaseAmt",
+    "interestFreeYn",
+    "directYn",
+    "carAccidentNo",
+    "warrantyYn",
+    "falsityYn",
+    "kbLeaseYn",
+    "friendDealerYn",
+    "orderDate",
+    "certifiedShopYn",
+    "kbCertifiedYn",
+    "hasOverThreeFileNames",
+    "diagYn",
+    "diagGbn",
+    "lineAdYn",
+    "tbMemberMemberName",
+    "colorCodeName",
+    "gasName",
+    "safeTel",
+    "carHistorySeq",
+    "homeserviceYn2",
+    "labsDanjiNo2",
+    "paymentPremiumYn",
+    "paymentPremiumText",
+    "paymentPremiumMarkNmArray",
+    "paymentPlayYn",
+]
+
+
+async def fetch_cars(
+    session: aiohttp.ClientSession, 
+    api_url: str, 
+    max_pages: int = 10
+) -> dict[str, Any] | None:    
+    parsed_url = urllib.parse.urlparse(api_url)
+    base_api = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+
+    # Preserve original filters from the stored URL, but avoid duplicating pagination/sort params.
+    original_pairs = urllib.parse.parse_qsl(parsed_url.query, keep_blank_values=True)
+    filtered_pairs: list[tuple[str, str]] = [
+        (k, v)
+        for k, v in original_pairs
+        if k not in {"v", "searchAfter", "includeFields", "page", "pageSize", "sort"}
+    ]
+
+    accumulated_hits: list[dict[str, Any]] = []
+    current_cursor: list[Any] | None = None
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        ),
+        "Referer": "https://m.kbchachacha.com/",
+        "Accept": "application/json",
+    }
+
+    max_pages = 10
+
+    for page_num in range(max_pages):
+        params: list[tuple[str, str]] = []
+        params.extend(filtered_pairs)
+        params.extend(
+            [
+                ("sort", "-paymentPlayYn,-orderDate"),
+                ("pageSize", "300"),
+                ("page", "1"),
+                ("displaySoldoutYn", "Y"),
+                ("paymentPremiumYn", "Y"),
+                ("v", str(int(time.time() * 1000))),
+            ]
+        )
+
+        for field in FIELDS:
+            params.append(("includeFields", field))
+
+        if current_cursor:
+            for val in current_cursor:
+                params.append(("searchAfter", str(val)))
+
+        logger.info("Fetching page", page=page_num + 1, search_after=current_cursor or [])
+
+        async with session.get(base_api, params=params, headers=headers) as resp:
+            if resp.status != 200:
+                logger.error("KB API Error", status=resp.status, url=str(resp.url))
+                return None
+
+            data = await resp.json()
+
+        result = data.get("result") if isinstance(data, dict) else None
+        hits = result.get("hits") if isinstance(result, dict) else None
+        if not isinstance(hits, list) or not hits:
+            break
+
+        accumulated_hits.extend(hits)
+
+        next_cursor = result.get("searchAfter") if isinstance(result, dict) else None
+        if not isinstance(next_cursor, list) or not next_cursor:
+            break
+        current_cursor = next_cursor
+
+    if not isinstance(data, dict):
+        return None
+
+    # Normalize shape for downstream code
+    data["list"] = accumulated_hits
+    if isinstance(data.get("result"), dict):
+        data["result"]["hits"] = accumulated_hits
+    return data
+</file>
+
+<file path="aiogram_bot_template/web_handlers/__init__.py">
+from .tg_updates import tg_updates_app as tg_updates_app
+</file>
+
+<file path="aiogram_bot_template/web_handlers/external_api.py">
+from aiohttp import web
+import orjson
+from aiogram import Bot
+from aiogram_bot_template.utils.auth import verify_password, hash_password, create_token # Убедитесь, что функции импортированы
+from aiogram_bot_template.utils.kb_api import convert_list_to_api, fetch_cars
+from aiogram_bot_template.db.db_api.watches import WatchesRepo
+from datetime import datetime
+import structlog
+
+logger = structlog.get_logger()
+
+routes = web.RouteTableDef()
+
+
+async def _resolve_channel_fk(conn, channel_id: object) -> int | None:
+    if channel_id is None:
+        return None
+
+    channel_id_str = str(channel_id).strip()
+    if not channel_id_str:
+        return None
+
+    try:
+        channel_id_int = int(channel_id_str)
+    except Exception:
+        channel_id_int = None
+
+    if channel_id_int is not None:
+        exists = await conn.fetchval("SELECT 1 FROM channels WHERE id = $1", channel_id_int)
+        if exists:
+            return channel_id_int
+
+    resolved_id = await conn.fetchval("SELECT id FROM channels WHERE chat_id = $1", channel_id_str)
+    if resolved_id:
+        return int(resolved_id)
+
+    raise web.HTTPBadRequest(
+        text=orjson.dumps(
+            {
+                "error": "Канал не найден. Передайте channelId как ID из /channels (поле id) или как Telegram chat_id (поле chatId).",
+            }
+        ).decode(),
+        content_type="application/json",
+    )
+
+# Хелпер для сериализации данных (обработка datetime и прочего)
+def json_response(data, status=200):
+    return web.json_response(
+        data, 
+        status=status, 
+        dumps=lambda obj: orjson.dumps(
+            obj, 
+            option=orjson.OPT_PASSTHROUGH_DATETIME,
+            default=lambda x: x.isoformat() if isinstance(x, datetime) else str(x)
+        ).decode()
+    )
+
+# --- AUTH ---
+@routes.post("/login")
+async def login_handler(request: web.Request):
+    try:
+        data = await request.json()
+        username = data.get("username")
+        password = data.get("password")
+
+        if not username or not password:
+            return json_response({"success": False, "error": "Введите логин и пароль"}, status=400)
+
+        db_pool = request.app["db_pool"]
+        
+        async with db_pool.acquire() as conn:
+            # Ищем пользователя в БД
+            user = await conn.fetchrow(
+                "SELECT username, password_hash FROM admin_users WHERE username = $1", 
+                username
+            )
+
+            # Если пользователь найден и пароль совпадает
+            if user and verify_password(password, user['password_hash']):
+                # Создаем реальный JWT токен
+                token = create_token(username)
+                
+                logger.info(f"Успешный вход: {username}")
+                return json_response({
+                    "success": True, 
+                    "token": token
+                })
+
+        # Если неверный логин или пароль
+        logger.warning(f"Неудачная попытка входа: {username}")
+        return json_response({
+            "success": False, 
+            "error": "Неверный логин или пароль"
+        }, status=401)
+
+    except Exception as e:
+        logger.error(f"Ошибка при авторизации: {e}")
+        return json_response({"success": False, "error": "Ошибка сервера"}, status=500)
+
+
+@routes.post("/change-password")
+async def change_password_handler(request: web.Request):
+    try:
+        data = await request.json()
+        current_password = data.get("currentPassword")
+        new_password = data.get("newPassword")
+        
+        # Получаем текущего пользователя (обычно из JWT, но для простоты возьмем admin)
+        db_pool = request.app["db_pool"]
+        async with db_pool.acquire() as conn:
+            user = await conn.fetchrow("SELECT * FROM admin_users WHERE username = 'admin'")
+            
+            if not user or not verify_password(current_password, user['password_hash']):
+                return json_response({"success": False, "error": "Текущий пароль неверен"}, status=400)
+            
+            # Хешируем новый пароль и сохраняем
+            new_hash = hash_password(new_password)
+            await conn.execute("UPDATE admin_users SET password_hash = $1 WHERE username = 'admin'", new_hash)
+            
+        return json_response({"success": True})
+    except Exception as e:
+        return json_response({"success": False, "error": str(e)}, status=500)
+
+# --- CHANNELS ---
+@routes.get("/channels")
+async def get_channels_handler(request: web.Request):
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        # Важно: в Postgres boolean возвращается как True/False, 
+        # aiohttp автоматически сконвертирует это в JSON true/false
+        rows = await conn.fetch("""
+            SELECT id, title, username, chat_id as "chatId", is_default as "isDefault" 
+            FROM channels 
+            ORDER BY is_default DESC, id ASC
+        """)
+        return json_response([dict(r) for r in rows])
+
+
+@routes.post("/channels")
+async def create_channel_handler(request: web.Request):
+    data = await request.json()
+    identifier = data.get("chat_id") # Сюда фронт может прислать @username или ID
+    bot: Bot = request.app["bot"]
+    db_pool = request.app["db_pool"]
+
+    try:
+        # Резолвим данные через Telegram
+        chat = await bot.get_chat(identifier)
+        
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO channels (title, username, chat_id) 
+                VALUES ($1, $2, $3) 
+                ON CONFLICT (chat_id) DO UPDATE SET title = EXCLUDED.title, username = EXCLUDED.username
+                RETURNING id, title, username, chat_id as "chatId", is_default as "isDefault"
+            """, chat.title, f"@{chat.username}" if chat.username else "private", str(chat.id))
+            
+            return json_response(dict(row))
+    except Exception as e:
+        return json_response({"error": f"ID/Username не найден: {str(e)}"}, status=400)
+
+# --- BOTS ---
+@routes.get("/bots")
+async def get_bots_handler(request: web.Request):
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        try:
+            # Выбираем все необходимые поля
+            rows = await conn.fetch("""
+                SELECT 
+                    id, 
+                    name, 
+                    token, 
+                    username, 
+                    channel_id as "channelId",
+                    is_active as "isActive"
+                FROM bots_managed 
+                ORDER BY id ASC
+            """)
+            
+            # Превращаем в список словарей
+            bots = [dict(r) for r in rows]
+            
+            # Для фронтенда добавим статус доступа (verified), если бот активен
+            for b in bots:
+                b["accessStatus"] = "verified" if b.get("isActive") else "no_access"
+                
+            return json_response(bots)
+        except Exception as e:
+            logger.error(f"Error getting bots from DB: {e}")
+            return json_response([])
+
+
+@routes.post("/bots")
+async def add_bot_handler(request: web.Request):
+    data = await request.json()
+    token = data.get("token")
+    name = data.get("name", "New Bot")
+    channel_id = data.get("channelId")
+
+    try:
+        # The backend fetches the TRUTH from Telegram API
+        async with Bot(token=token) as temp_bot:
+            me = await temp_bot.get_me()
+            official_username = f"@{me.username}"
+
+        db_pool = request.app["db_pool"]
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO bots_managed (name, token, username, channel_id)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (token) DO UPDATE 
+                SET name = EXCLUDED.name, 
+                    username = EXCLUDED.username, 
+                    channel_id = EXCLUDED.channel_id
+                RETURNING id, name, token, username, channel_id as "channelId"
+            """, name, token, official_username, int(channel_id) if channel_id else None)
+            
+            return json_response(dict(row))
+    except Exception as e:
+        return json_response({"error": f"Invalid Bot Token: {str(e)}"}, status=400)
+
+@routes.post("/bots/check_access")
+async def check_bot_access_handler(request: web.Request):
+    data = await request.json()
+    token = data.get("token")
+    chat_id = data.get("chat_id")
+    
+    try:
+        async with Bot(token=token) as temp_bot:
+            me = await temp_bot.get_me()
+            member = await temp_bot.get_chat_member(chat_id=chat_id, user_id=me.id)
+            has_access = member.status in ["administrator", "creator"]
+            return json_response({"hasAccess": has_access})
+    except Exception as e:
+        return json_response({"hasAccess": False, "error": str(e)})
+
+@routes.delete("/bots/{id}")
+async def delete_bot(request: web.Request):
+    bot_id = int(request.match_info['id'])
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM bots_managed WHERE id = $1", bot_id)
+    return json_response({"status": "deleted"})
+
+# --- WATCHERS ---
+
+@routes.get("/watchers")
+async def get_watchers_handler(request: web.Request):
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT 
+                id, name, original_url as "sourceUrl", 
+                api_url as "generatedUrl", channel_id as "channelId", 
+                check_interval as "interval", is_active, 
+                created_at as "createdAt", last_run_at as "lastCheck"
+            FROM kb_watches ORDER BY id DESC
+        """)
+        
+        watchers = []
+        for r in rows:
+            d = dict(r)
+            d["status"] = "running" if d.pop("is_active") else "stopped"
+            d["verificationStatus"] = "verified"
+            # КРИТИЧНО: Превращаем в строку для фронтенда
+            d["channelId"] = str(d["channelId"]) if d["channelId"] else ""
+            watchers.append(d)
+        return json_response(watchers)
+
+@routes.post("/watchers")
+async def add_watch_handler(request: web.Request):
+    data = await request.json()
+    list_url = data.get("url")
+    name = data.get("name")
+    channel_id = data.get("channelId")
+    interval = int(data.get("interval", 60))
+
+    api_url = convert_list_to_api(list_url)
+    db_pool = request.app["db_pool"]
+    parsing_session = request.app["parsing_session"]
+    
+    # 1. Проверка первой страницы (быстрый ответ)
+    api_data = await fetch_cars(parsing_session, api_url, max_pages=1)
+    if not api_data or not api_data.get("list"):
+        return json_response({"error": "На первой странице нет авто или URL неверный"}, status=400)
+
+    last_seq = str(api_data["list"][0]["carSeq"])
+ 
+    async with db_pool.acquire() as conn:
+        resolved_channel_id = await _resolve_channel_fk(conn, channel_id)
+        watch_id = await conn.fetchval("""
+            INSERT INTO kb_watches (name, original_url, api_url, last_car_seq, check_interval, channel_id, is_active) 
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE) RETURNING id
+        """, name, list_url, api_url, last_seq, interval, resolved_channel_id)
+        
+        # Сидим только первую страницу, чтобы не спамить
+        await conn.executemany("""
+            INSERT INTO kb_seen_cars (watch_id, car_history_seq, car_seq)
+            VALUES ($1, $2, $3) ON CONFLICT DO NOTHING
+        """, [(watch_id, str(c.get("carHistorySeq") or "0"), str(c["carSeq"])) for c in api_data["list"]])
+
+    return json_response({
+        "id": watch_id,
+        "name": name,
+        "sourceUrl": list_url,
+        "generatedUrl": api_url,
+        "channelId": str(resolved_channel_id) if resolved_channel_id else "",
+        "status": "running",
+        "verificationStatus": "verified"
+    })  
+
+@routes.patch("/watchers/{id}/status")
+async def toggle_watcher_status_handler(request: web.Request):
+    try:
+        watcher_id = int(request.match_info['id'])
+        data = await request.json()
+        # Фронтенд присылает статус "running" или "stopped"
+        new_status = data.get("status")
+        is_active = (new_status == "running")
+
+        db_pool = request.app["db_pool"]
+        async with db_pool.acquire() as conn:
+            # Обновляем поле is_active в базе данных
+            result = await conn.execute(
+                "UPDATE kb_watches SET is_active = $1 WHERE id = $2",
+                is_active, watcher_id
+            )
+            
+            if "UPDATE 0" in result:
+                return json_response({"error": "Watcher not found"}, status=404)
+
+        return json_response({"status": "ok", "id": watcher_id, "is_active": is_active})
+    except Exception as e:
+        return json_response({"error": str(e)}, status=500)
+
+# --- УДАЛЕНИЕ ---
+@routes.delete("/watchers/{id}")
+async def delete_watcher_handler(request: web.Request):
+    try:
+        watcher_id = int(request.match_info['id'])
+        db_pool = request.app["db_pool"]
+        
+        async with db_pool.acquire() as conn:
+            # Благодаря ON DELETE CASCADE в структуре таблицы, 
+            # история увиденных машин (kb_seen_cars) удалится автоматически
+            result = await conn.execute("DELETE FROM kb_watches WHERE id = $1", watcher_id)
+            
+            if "DELETE 0" in result:
+                return json_response({"error": "Watcher not found"}, status=404)
+                
+        return json_response({"status": "deleted", "id": watcher_id})
+    except Exception as e:
+        return json_response({"error": str(e)}, status=500)
+
+# --- ОБНОВЛЕНИЕ (РЕДАКТИРОВАНИЕ) ---
+@routes.put("/watchers/{id}")
+async def update_watcher_handler(request: web.Request):
+    try:
+        watcher_id = int(request.match_info['id'])
+        data = await request.json()
+        
+        db_pool = request.app["db_pool"]
+        parsing_session = request.app["parsing_session"]
+
+        # Получаем данные из запроса
+        name = data.get("name")
+        list_url = data.get("url")
+        channel_id = data.get("channelId")
+        interval = data.get("interval")
+
+        async with db_pool.acquire() as conn:
+            resolved_channel_id = await _resolve_channel_fk(conn, channel_id)
+            # 1. Если URL изменился, нужно перегенерировать API URL и сбросить историю
+            if list_url:
+                api_url = convert_list_to_api(list_url)
+                # Получаем новый стартовый seq
+                api_data = await fetch_cars(parsing_session, api_url, max_pages=1)
+                last_seq = str(api_data["list"][0]["carSeq"]) if api_data and api_data.get("list") else None
+                
+                await conn.execute("""
+                    UPDATE kb_watches SET 
+                        name = $1, original_url = $2, api_url = $3, 
+                        channel_id = $4, check_interval = $5, last_car_seq = $6
+                    WHERE id = $7
+                """, name, list_url, api_url, resolved_channel_id, 
+                int(interval) if interval else 60, last_seq, watcher_id)
+            else:
+                # 2. Если URL не менялся, обновляем только метаданные
+                await conn.execute("""
+                    UPDATE kb_watches SET 
+                        name = $1, channel_id = $2, check_interval = $3
+                    WHERE id = $4
+                """, name, resolved_channel_id, 
+                int(interval) if interval else 60, watcher_id)
+
+        return json_response({"status": "updated"})
+    except Exception as e:
+        return json_response({"error": str(e)}, status=500)
+
+
+@routes.get("/notification-users")
+async def get_notification_users_handler(request: web.Request):
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, name, username as \"telegramUsername\", created_at as \"createdAt\" FROM notification_users")
+        return json_response([dict(r) for r in rows])
+
+
+@routes.post("/notification-users")
+async def add_notification_user_handler(request: web.Request):
+    data = await request.json()
+    identifier = str(data.get("telegramUsername")).strip() # Может быть "123456" или "@username"
+    name = data.get("name")
+    bot: Bot = request.app["bot"]
+    db_pool = request.app["db_pool"]
+
+    try:
+        # 1. Пытаемся получить данные чата/пользователя
+        # Telegram API понимает и числовые ID, и юзернеймы (если бот их "видел")
+        chat = await bot.get_chat(identifier)
+        chat_id = str(chat.id)
+        username = f"@{chat.username}" if chat.username else f"ID: {chat_id}"
+
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                INSERT INTO notification_users (name, username, chat_id) 
+                VALUES ($1, $2, $3) 
+                ON CONFLICT (chat_id) DO UPDATE SET name = EXCLUDED.name, username = EXCLUDED.username
+                RETURNING id, name, username as "telegramUsername", created_at as "createdAt"
+            """, name, username, chat_id)
+            return json_response(dict(row))
+            
+    except Exception as e:
+        # Если get_chat упал, значит пользователь не начинал диалог с ботом
+        logger.error(f"Error adding notification user: {e}")
+        return json_response({
+            "error": "Пользователь не найден. Инструкция: 1. Напишите боту /start. 2. Введите полученный ID в это поле."
+        }, status=400)
+
+
+@routes.delete("/notification-users/{id}")
+async def delete_notification_user_handler(request: web.Request):
+    user_id = int(request.match_info['id'])
+    db_pool = request.app["db_pool"]
+    async with db_pool.acquire() as conn:
+        await conn.execute("DELETE FROM notification_users WHERE id = $1", user_id)
+    return json_response({"status": "deleted"})
+</file>
+
+<file path="infra/scripts/init_project.py">
+import pathlib
+import subprocess  # noqa: S404
+
+PROJECT_DIR = pathlib.Path(__file__).parent.parent.parent
+PROJECT_DIR_NAME = PROJECT_DIR.name
+
+DEFAULT_PROJECT_DIR = "aiogram-bot-template"
+DEFAULT_APP_FOLDER_NAME = "aiogram_bot_template"
+
+
+def get_app_name(project_dir_name: str) -> str:
+    suggested_app_name = project_dir_name.replace("-", "_")
+    print(f"Suggested app name: [{suggested_app_name}]")  # noqa: T201
+    if get_confirmation("Accept?", default_option=True):
+        return suggested_app_name
+    return input("Input app name: ")
+
+
+def capitalize_app_name(app_name: str) -> list[str]:
+    words = app_name.replace("_", " ").split()
+    return [x.capitalize() for x in words]
+
+
+def get_confirmation(question: str, default_option: bool | None) -> bool:
+    input_prompt = "{question} (Y/y/N/n){default_option_possible}: ".format(
+        question=question,
+        default_option_possible=(
+            " (default={default_option})".format(
+                default_option="Y" if default_option else "N",
+            )
+            if default_option is not None
+            else ""
+        ),
+    )
+    while True:
+        user_answer = input(input_prompt)
+        if user_answer.lower() == "y":
+            return True
+        if user_answer.lower() == "n":
+            return False
+        if default_option is not None and not user_answer:
+            return default_option
+        print("Wrong input")  # noqa: T201
+
+
+def rename_app_folder(
+    *,
+    project_dir: pathlib.Path,
+    old_folder_name: str,
+    new_folder_name: str,
+) -> None:
+
+    old_folder = project_dir / old_folder_name
+    new_folder = project_dir / new_folder_name
+    if new_folder.exists():
+        print(f"{new_folder} already exists")  # noqa: T201
+        return
+    if not old_folder.exists():
+        print(f"{old_folder} doesnt exist")  # noqa: T201
+        return
+    if get_confirmation(
+        f"[{old_folder.name}] found in dir. Rename to [{new_folder.name}]?",
+        default_option=True,
+    ):
+        old_folder.rename(new_folder)
+
+
+def rename_systemd_unit(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    old_systemd_unit = project_dir / "infra" / "systemd" / f"{old_app_name}.service"
+    new_systemd_unit = project_dir / "infra" / "systemd" / f"{new_app_name}.service"
+    if new_systemd_unit.exists():
+        print(f"{new_systemd_unit} already exists")  # noqa: T201
+        return
+    if not old_systemd_unit.exists():
+        print(f"{old_systemd_unit} doesnt exist")  # noqa: T201
+        return
+    if get_confirmation(
+        f"[{old_systemd_unit.name}] found in infra/systemd. Rename to [{new_systemd_unit.name}]?",
+        default_option=True,
+    ):
+        old_systemd_unit.rename(new_systemd_unit)
+
+
+
+
+def rename_infra_files(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    rename_systemd_unit(
+        project_dir=project_dir,
+        old_app_name=old_app_name,
+        new_app_name=new_app_name,
+    )
+
+
+def rename_app_in_py_normal(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    if get_confirmation(
+        f"replace all [{old_app_name}] with [{new_app_name}] in .py files?",
+        default_option=True,
+    ):
+        subprocess.call(
+            [  # noqa: S603, S607
+                "find",
+                project_dir / new_app_name,
+                "-type",
+                "f",
+                "-name",
+                "*.py",
+                "-exec",
+                "sed",
+                "-i",
+                f"s/{old_app_name}/{new_app_name}/g",
+                "{}",
+                ";",
+            ],
+        )
+
+
+def rename_app_in_py_capitalized(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    capitilized_old_app_name = "".join(capitalize_app_name(old_app_name))
+    capitilized_new_app_name = "".join(capitalize_app_name(new_app_name))
+    if get_confirmation(
+        f"replace all [{capitilized_old_app_name}] with [{capitilized_new_app_name}] in .py files?",
+        default_option=True,
+    ):
+        subprocess.call(
+            [  # noqa: S603, S607
+                "find",
+                project_dir / new_app_name,
+                "-type",
+                "f",
+                "-name",
+                "*.py",
+                "-exec",
+                "sed",
+                "-i",
+                f"s/{capitilized_old_app_name}/{capitilized_new_app_name}/g",
+                "{}",
+                ";",
+            ],
+        )
+
+
+def rename_app_in_py_capitalized_split_words(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    capitilized_old_app_name_split_words = " ".join(capitalize_app_name(old_app_name))
+    capitilized_new_app_name_split_words = " ".join(capitalize_app_name(new_app_name))
+    if get_confirmation(
+        f"replace all [{capitilized_old_app_name_split_words}] with [{capitilized_new_app_name_split_words}] in .py files?",
+        default_option=True,
+    ):
+        subprocess.call(
+            [  # noqa: S603, S607
+                "find",
+                project_dir / new_app_name,
+                "-type",
+                "f",
+                "-name",
+                "*.py",
+                "-exec",
+                "sed",
+                "-i",
+                f"s/{capitilized_old_app_name_split_words}/{capitilized_new_app_name_split_words}/Ig",
+                "{}",
+                ";",
+            ],
+        )
+
+
+def rename_app_in_py(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    rename_app_in_py_normal(
+        project_dir=project_dir,
+        old_app_name=old_app_name,
+        new_app_name=new_app_name,
+    )
+    rename_app_in_py_capitalized(
+        project_dir=project_dir,
+        old_app_name=old_app_name,
+        new_app_name=new_app_name,
+    )
+    rename_app_in_py_capitalized_split_words(
+        project_dir=project_dir,
+        old_app_name=old_app_name,
+        new_app_name=new_app_name,
+    )
+
+
+def rename_app_in_project_toml(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    def get_new_line(
+        *,
+        current_line: str,
+        replacements_list: list[tuple[str, str]],
+    ) -> str:
+        for old_line, replacement in replacements_list:
+            if current_line.startswith(old_line):
+                return replacement
+        if current_line.startswith(
+            'description = "Template for creating scalable bots with aiogram"',
+        ) and get_confirmation(
+            "Change project description in pyproject.toml?",
+            default_option=True,
+        ):
+            new_description = input(
+                "Input new description (old: [Template for creating scalable bots with aiogram]): ",
+            )
+            return f'description = "{new_description}"\n'
+        return current_line
+
+    replacements = [
+        (
+            f'name = "{DEFAULT_PROJECT_DIR}"',
+            f'name = "{PROJECT_DIR_NAME}"\n',
+        ),
+        (
+            f'packages = [{{ include = "{old_app_name}" }}]',
+            f'packages = [{{ include = "{new_app_name}" }}]\n',
+        ),
+        (
+            f'{old_app_name} = "{old_app_name}.bot:main"',
+            f'{new_app_name} = "{new_app_name}.bot:main"\n',
+        ),
+    ]
+    pyproject_file = project_dir / "pyproject.toml"
+    with pyproject_file.open(mode="r") as f:
+        data = f.readlines()
+    new_data = [
+        get_new_line(current_line=line, replacements_list=replacements) for line in data
+    ]
+    with pyproject_file.open(mode="w") as f:
+        f.writelines(new_data)
+
+
+def rename_app_in_cicd(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    if get_confirmation(
+        f"replace all [{old_app_name}] with [{new_app_name}] in ./github/workflows/.yml files?",
+        default_option=True,
+    ):
+        subprocess.call(
+            [  # noqa: S603, S607
+                "find",
+                project_dir / ".github" / "workflows",
+                "-type",
+                "f",
+                "-name",
+                "*.yml",
+                "-exec",
+                "sed",
+                "-i",
+                f"s/{old_app_name}/{new_app_name}/g",
+                "{}",
+                ";",
+            ],
+        )
+
+
+def rename_app_in_makefile(
+    *,
+    project_dir: pathlib.Path,
+    old_app_name: str,
+    new_app_name: str,
+) -> None:
+    if get_confirmation(
+        f"replace all [{old_app_name}] with [{new_app_name}] in Makefile?",
+        default_option=True,
+    ):
+        subprocess.call(
+            [  # noqa: S603, S607
+                "find",
+                project_dir,
+                "-type",
+                "f",
+                "-name",
+                "Makefile",
+                "-exec",
+                "sed",
+                "-i",
+                f"s/{old_app_name}/{new_app_name}/g",
+                "{}",
+                ";",
+            ],
+        )
+
+
+def init_project() -> None:
+    app_name = get_app_name(PROJECT_DIR_NAME)
+    print(f"{app_name=}")  # noqa: T201
+    rename_app_folder(
+        project_dir=PROJECT_DIR,
+        old_folder_name=DEFAULT_APP_FOLDER_NAME,
+        new_folder_name=app_name,
+    )
+    rename_infra_files(
+        project_dir=PROJECT_DIR,
+        old_app_name=DEFAULT_APP_FOLDER_NAME,
+        new_app_name=app_name,
+    )
+    rename_app_in_py(
+        project_dir=PROJECT_DIR,
+        old_app_name=DEFAULT_APP_FOLDER_NAME,
+        new_app_name=app_name,
+    )
+    rename_app_in_project_toml(
+        project_dir=PROJECT_DIR,
+        old_app_name=DEFAULT_APP_FOLDER_NAME,
+        new_app_name=app_name,
+    )
+    rename_app_in_cicd(
+        project_dir=PROJECT_DIR,
+        old_app_name=DEFAULT_APP_FOLDER_NAME,
+        new_app_name=app_name,
+    )
+    rename_app_in_makefile(
+        project_dir=PROJECT_DIR,
+        old_app_name=DEFAULT_APP_FOLDER_NAME,
+        new_app_name=app_name,
+    )
+
+
+if __name__ == "__main__":
+    init_project()
+</file>
+
+<file path="nginx/conf/default.conf">
+server {
+    listen 80;
+    server_name api.kbchachacha.zbek.me;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name api.kbchachacha.zbek.me;
+
+    ssl_certificate /etc/letsencrypt/live/api.kbchachacha.zbek.me/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.kbchachacha.zbek.me/privkey.pem;
+
+    location / {
+        proxy_pass http://backend:8080; # Проксируем на наш Python контейнер
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Настройки для вебхуков
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
+</file>
+
+<file path="example.env">
+BOT_TOKEN=123456:AAAAAAAAAA
+
+PG_HOST=
+PG_PORT=5432
+PG_USER=
+PG_PASSWORD=
+PG_DATABASE=
+
+FSM_HOST=127.0.0.1
+FSM_PORT=6379
+FSM_PASSWORD=
+</file>
+
+<file path="LICENSE">
+MIT License
+
+Copyright (c) 2023 Forden
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+</file>
+
+<file path="aiogram_bot_template/db/db_api/storages/__init__.py">
+from .base import BaseConnection as BaseConnection
+from .postgres import PostgresConnection as PostgresConnection
+</file>
+
+<file path="aiogram_bot_template/db/db_api/storages/base.py">
+import typing
+from typing import Any, TypeVar
+
+T = TypeVar("T")
+
+
+class SingleQueryResult:
+    def __init__(self, result: typing.Mapping[str, Any] | None) -> None:
+        self._data = {**result} if result else None
+
+    @property
+    def data(self) -> dict[str, Any] | None:
+        return self._data
+
+    def convert(self, model: type[T]) -> T | None:
+        return model(**self.data) if self.data else None
+
+
+class MultipleQueryResults:
+    def __init__(self, results: list[typing.Mapping[str, Any]]) -> None:
+        self._data: list[dict[str, Any]] = [{**i} for i in results]
+
+    @property
+    def data(self) -> list[dict[str, Any]]:
+        return self._data
+
+    def convert(self, model: type[T]) -> list[T]:
+        return [model(**i) for i in self.data]
+
+
+class BaseConnection:
+    async def _fetch(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: Any | None = None,
+    ) -> MultipleQueryResults:
+        raise NotImplementedError
+
+    async def _fetchrow(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: Any | None = None,
+    ) -> SingleQueryResult:
+        raise NotImplementedError
+
+    async def _execute(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: Any | None = None,
+    ) -> None:
+        raise NotImplementedError
+</file>
+
+<file path="aiogram_bot_template/exceptions/base.py">
+class BaseAiogramBotTemplateError(Exception):
+    """Base exception for all Aiogram bot template errors"""
+
+
+class DetailedAiogramBotTemplateError(BaseAiogramBotTemplateError):
+    """Base exception for all Aiogram bot template errors with detailed message"""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+    def __str__(self) -> str:
+        message = self.message
+        return message
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}('{self}')"
+</file>
+
+<file path="aiogram_bot_template/filters/__init__.py">
+from .chat_type import ChatTypeFilter as ChatTypeFilter
+from .text import TextFilter as TextFilter
+</file>
+
+<file path="aiogram_bot_template/keyboards/inline/__init__.py">
+from . import admin as admin
+from . import callbacks as callbacks
+from . import user as user
+</file>
+
+<file path="aiogram_bot_template/utils/__init__.py">
+from . import chunks as chunks
+from . import connect_to_services as connect_to_services
+from . import logging as logging
+from . import smart_session as smart_session
+</file>
+
+<file path="aiogram_bot_template/utils/logging.py">
+import logging
+import sys
+
+import structlog
+
+from aiogram_bot_template import models
+from aiogram_bot_template.data import config
+
+
+def setup_logger() -> structlog.typing.FilteringBoundLogger:
+    logging.basicConfig(
+        level=config.LOGGING_LEVEL,
+        stream=sys.stdout,
+    )
+    log: structlog.typing.FilteringBoundLogger = structlog.get_logger(
+        structlog.stdlib.BoundLogger,
+    )
+    shared_processors: list[structlog.typing.Processor] = [
+        structlog.processors.add_log_level,
+    ]
+    processors: list[structlog.typing.Processor] = [*shared_processors]
+    if sys.stderr.isatty():
+        # Pretty printing when we run in a terminal session.
+        # Automatically prints pretty tracebacks when "rich" is installed
+        processors.extend(
+            [
+                structlog.processors.TimeStamper(fmt="iso", utc=True),
+                structlog.dev.ConsoleRenderer(),
+            ],
+        )
+    else:
+        # Print JSON when we run, e.g., in a Docker container.
+        # Also print structured tracebacks.
+        processors.extend(
+            [
+                structlog.processors.TimeStamper(fmt=None, utc=True),
+                structlog.processors.dict_tracebacks,
+                structlog.processors.JSONRenderer(serializer=models.base.orjson_dumps),
+            ],
+        )
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.make_filtering_bound_logger(config.LOGGING_LEVEL),
+    )
+    return log
+</file>
+
+<file path="infra/systemd/aiogram_bot_template.service">
+[Unit]
+Description=Aiogram bot
+After=network-online.target
+Wants=systemd-networkd-wait-online.service
+
+[Service]
+DevicePolicy=closed
+DynamicUser=true
+LockPersonality=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=noaccess
+ProtectSystem=strict
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+NoNewPrivileges=true
+PrivateTmp=true
+
+AmbientCapabilities=CAP_IPC_LOCK
+
+Type=simple
+WorkingDirectory=/opt/aiogram-bot-template
+ExecStart=/usr/bin/poetry run aiogram_bot_template
+EnvironmentFile=/opt/aiogram-bot-template/.env
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+</file>
+
+<file path=".github/workflows/codeql-analysis.yml">
+# For most projects, this workflow file will not need changing; you simply need
+# to commit it to your repository.
+#
+# You may wish to alter this file to override the set of languages analyzed,
+# or to provide custom queries or build logic.
+#
+# ******** NOTE ********
+# We have attempted to detect the languages in your repository. Please check
+# the `language` matrix defined below to confirm you have the correct set of
+# supported CodeQL languages.
+#
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    # The branches below must be a subset of the branches above
+    branches: [ master ]
+  schedule:
+    - cron: '26 13 * * 0'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'python' ]
+        # CodeQL supports [ 'cpp', 'csharp', 'go', 'java', 'javascript', 'python' ]
+        # Learn more:
+        # https://docs.github.com/en/free-pro-team@latest/github/finding-security-vulnerabilities-and-errors-in-your-code/configuring-code-scanning#changing-the-languages-that-are-analyzed
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+        # If you wish to specify custom queries, you can do so here or in a config file.
+        # By default, queries listed here will override any specified in a config file.
+        # Prefix the list here with "+" to use these queries and those in the config file.
+        # queries: ./path/to/local/query, your-org/your-repo/queries@main
+
+    # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
+    # If this step fails, then you should remove it and run the build manually (see below)
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+
+    # ℹ️ Command-line programs to run using the OS shell.
+    # 📚 https://git.io/JvXDl
+
+    # ✏️ If the Autobuild fails above, remove it and uncomment the following three lines
+    #    and modify them (or add more) to build your code if your project
+    #    uses a compiled language
+
+    #- run: |
+    #   make bootstrap
+    #   make release
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+</file>
+
+<file path="aiogram_bot_template/db/db_api/storages/postgres.py">
+import json
+import time
+from typing import Any, TypeVar
+
+import asyncpg
+import orjson
+import structlog
+
+from .base import BaseConnection, MultipleQueryResults, SingleQueryResult
+
+T = TypeVar("T")
+
+
+class PostgresConnection(BaseConnection):
+    CONNECTION_TYPES_CODES = (
+        ("json", json.dumps, orjson.loads, "pg_catalog"),
+        ("jsonb", json.dumps, orjson.loads, "pg_catalog"),
+    )
+
+    def __init__(
+        self,
+        connection_poll: asyncpg.Pool,
+        logger: structlog.typing.FilteringBoundLogger,
+        *,
+        decode_json: bool = False,
+    ) -> None:
+        self._pool = connection_poll
+
+        self._logger = logger
+        self._decode_json = decode_json
+
+    async def apply_connection_types_codecs(
+        self,
+        connection: asyncpg.Connection,
+    ) -> None:
+        for typename, encoder, decoder, schema in self.CONNECTION_TYPES_CODES:
+            await connection.set_type_codec(
+                typename=typename,
+                encoder=encoder,
+                decoder=decoder,
+                schema=schema,
+            )
+
+    async def _fetch(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: asyncpg.Connection | None = None,
+    ) -> MultipleQueryResults:
+        async def __fetch(
+            connection: asyncpg.Connection,
+            query: str,
+            query_params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        ) -> Any:
+            if self._decode_json:
+                await self.apply_connection_types_codecs(connection)
+
+            if params is not None:
+                res = await connection.fetch(query, *query_params)
+            else:
+                res = await connection.fetch(query)
+            return res
+
+        st = time.monotonic()
+        request_logger = self._logger.bind(sql=sql, params=params)
+        request_logger.debug("Making query to DB")
+        try:
+            if con is None:
+                async with self._pool.acquire() as local_con:
+                    raw_result = await __fetch(local_con, sql, params)
+            else:
+                raw_result = await __fetch(con, sql, params)
+        except Exception as e:
+            # change to appropriate error handling
+            request_logger = request_logger.bind(error=e)
+            request_logger.exception("Error while making query")
+            raise
+        else:
+            results = list(raw_result)
+        finally:
+            request_logger.debug(
+                "Finished query to DB",
+                spent_time_ms=(time.monotonic() - st) * 1000,
+            )
+
+        return MultipleQueryResults(results)
+
+    async def _fetchrow(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: asyncpg.Connection | None = None,
+    ) -> SingleQueryResult:
+        async def __fetchrow(
+            connection: asyncpg.Connection,
+            query: str,
+            query_params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        ) -> Any:
+            if self._decode_json:
+                await self.apply_connection_types_codecs(connection)
+
+            if params is not None:
+                res = await connection.fetchrow(query, *query_params)
+            else:
+                res = await connection.fetchrow(query)
+            return res
+
+        st = time.monotonic()
+        request_logger = self._logger.bind(sql=sql, params=params)
+        request_logger.debug("Making query to DB")
+
+        try:
+            if con is None:
+                async with self._pool.acquire() as local_con:
+                    raw_result = await __fetchrow(local_con, sql, params)
+            else:
+                raw_result = await __fetchrow(con, sql, params)
+        except Exception as e:
+            # change to appropriate error handling
+            request_logger = request_logger.bind(error=e)
+            request_logger.exception("Error while making query")
+            raise
+        else:
+            result = raw_result
+        finally:
+            request_logger.debug(
+                "Finished query to DB",
+                spent_time_ms=(time.monotonic() - st) * 1000,
+            )
+
+        return SingleQueryResult(result)
+
+    async def _execute(
+        self,
+        sql: str,
+        params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        con: asyncpg.Connection | None = None,
+    ) -> None:
+        async def __execute(
+            connection: asyncpg.Connection,
+            query: str,
+            query_params: tuple[Any, ...] | list[tuple[Any, ...]] | None = None,
+        ) -> None:
+            if self._decode_json:
+                await self.apply_connection_types_codecs(connection)
+
+            if query_params is not None:
+                if isinstance(query_params, list):
+                    await connection.executemany(query, query_params)
+                else:
+                    await connection.execute(query, *query_params)
+            else:
+                await connection.execute(query)
+
+        st = time.monotonic()
+        request_logger = self._logger.bind(sql=sql, params=params)
+        request_logger.debug("Making query to DB")
+        try:
+            if con is None:
+                async with self._pool.acquire() as local_con:
+                    await __execute(local_con, sql, params)
+            else:
+                await __execute(con, sql, params)
+        except Exception as e:
+            # change to appropriate error handling
+            request_logger = self._logger.bind(error=e)
+            request_logger.exception("Error while making query")
+            raise
+        finally:
+            request_logger.debug(
+                "Finished query to DB",
+                spent_time_ms=(time.monotonic() - st) * 1000,
+            )
+</file>
+
+<file path="aiogram_bot_template/filters/chat_type.py">
+import typing
+
+from aiogram.filters import BaseFilter
+from aiogram.types import Message
+
+
+class ChatTypeFilter(BaseFilter):
+    def __init__(self, chat_type: str | typing.Sequence[str]) -> None:
+        self.chat_type = chat_type
+
+    async def __call__(self, message: Message) -> bool:
+        if isinstance(self.chat_type, str):
+            return message.chat.type == self.chat_type
+        return message.chat.type in self.chat_type
+</file>
+
+<file path="aiogram_bot_template/filters/text.py">
+from aiogram.filters import BaseFilter
+from aiogram.types import CallbackQuery, Message
+
+
+class TextFilter(BaseFilter):
+    def __init__(self, text: str | list[str]) -> None:
+        if isinstance(text, str):
+            self.text = [text]
+        else:
+            self.text = text
+
+    async def __call__(self, obj: Message | CallbackQuery) -> bool:
+        if isinstance(obj, Message):
+            txt = obj.text or obj.caption
+            return any(i == txt for i in self.text)
+        if isinstance(obj, CallbackQuery):
+            return obj.data in self.text
+        return False  # type: ignore[unreachable]
+</file>
+
+<file path="aiogram_bot_template/keyboards/keyboard_utils/schema_generator.py">
+from collections.abc import Sequence
+from typing import TypeVar
+
+from aiogram_bot_template import exceptions
+
+T = TypeVar("T")
+
+
+def create_keyboard_layout(buttons: Sequence[T], count: Sequence[int]) -> list[list[T]]:
+    if sum(count) != len(buttons):
+        raise exceptions.WrongKeyboardSchemaError(
+            schema_size=sum(count),
+            buttons_count=len(buttons),
+        )
+    tmplist: list[list[T]] = []
+    btn_number = 0
+    for a in count:
+        tmplist.append([])
+        for _ in range(a):
+            tmplist[-1].append(buttons[btn_number])
+            btn_number += 1
+    return tmplist
+</file>
+
+<file path="aiogram_bot_template/utils/chunks.py">
+import collections.abc
+import typing
+
+T = typing.TypeVar("T")
+
+
+def chunks(
+    list_to_split: typing.Sequence[T],
+    chunk_size: int,
+) -> collections.abc.Iterator[typing.Sequence[T]]:
+    for i in range(0, len(list_to_split), chunk_size):
+        yield list_to_split[i : i + chunk_size]
+</file>
+
+<file path="aiogram_bot_template/utils/smart_session.py">
+import asyncio
+import time
+from typing import Any
+
+import structlog.typing
+from aiogram import Bot
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.exceptions import (
+    RestartingTelegram,
+    TelegramRetryAfter,
+    TelegramServerError,
+)
+from aiogram.methods.base import TelegramMethod, TelegramType
+
+
+class StructLogAiogramAiohttpSessions(AiohttpSession):
+    def __init__(
+        self,
+        logger: structlog.typing.FilteringBoundLogger,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._logger = logger
+
+    async def make_request(
+        self,
+        bot: Bot,
+        method: TelegramMethod[TelegramType],
+        timeout: int | None = None,
+    ) -> TelegramType:
+        req_logger = self._logger.bind(
+            bot=bot.token,
+            method=method.model_dump(exclude_none=True, exclude_unset=True),
+            timeout=timeout,
+            api=self.api,
+            url=self.api.api_url(bot.token, method.__api_method__),
+        )
+        st = time.monotonic()
+        req_logger.debug("Making request to API")
+        try:
+            res = await super().make_request(bot, method, timeout)
+        except Exception as e:
+            req_logger.exception(
+                "API error",
+                error=e,
+                time_spent_ms=(time.monotonic() - st) * 1000,
+            )
+            raise
+        req_logger.debug(
+            "API response",
+            response=(
+                res.model_dump(exclude_none=True, exclude_unset=True)
+                if hasattr(res, "model_dump")
+                else res
+            ),
+            time_spent_ms=(time.monotonic() - st) * 1000,
+        )
+        return res
+
+
+class SmartAiogramAiohttpSession(StructLogAiogramAiohttpSessions):
+    async def make_request(
+        self,
+        bot: Bot,
+        method: TelegramMethod[TelegramType],
+        timeout: int | None = None,
+    ) -> TelegramType:
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                res = await super().make_request(bot, method, timeout)
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+            except (RestartingTelegram, TelegramServerError):
+                if attempt > 6:  # noqa: PLR2004
+                    sleepy_time = 64
+                else:
+                    sleepy_time = 2**attempt
+                await asyncio.sleep(sleepy_time)
+            except Exception:
+                raise
+            else:
+                return res
+</file>
+
+<file path=".gitignore">
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+.idea/
+.ruff_cache/
+.vscode/
+</file>
+
+<file path="Makefile">
+PROJECT_DIR=aiogram_bot_template
+
+all: lint
+
+lint:
+	poetry run python -m ruff check $(PROJECT_DIR) --config pyproject.toml --fix
+	poetry run python -m isort $(PROJECT_DIR)
+	poetry run python -m mypy $(PROJECT_DIR) --config-file pyproject.toml
+	poetry run python -m black $(PROJECT_DIR) --config pyproject.toml
+
+init_project:
+	poetry run python infra/scripts/init_project.py
+</file>
+
+<file path="aiogram_bot_template/handlers/user/__init__.py">
+from aiogram import Router
+from aiogram.filters import CommandStart, StateFilter
+
+from aiogram_bot_template import states
+from aiogram_bot_template.filters import ChatTypeFilter, TextFilter
+
+from . import start
+
+
+def prepare_router() -> Router:
+    user_router = Router()
+    user_router.message.filter(ChatTypeFilter("private"))
+
+    user_router.message.register(start.start, CommandStart())
+    user_router.message.register(
+        start.start,
+        TextFilter("🏠В главное меню"),  # noqa: RUF001
+        StateFilter(states.user.UserMainMenu.menu),
+    )
+
+    return user_router
+</file>
+
+<file path="aiogram_bot_template/handlers/user/start.py">
+# aiogram_bot_template/handlers/user/start.py
+from aiogram import html, types
+from aiogram.fsm.context import FSMContext
+from aiogram_bot_template import states
+
+async def start(msg: types.Message, state: FSMContext) -> None:
+    if msg.from_user is None:
+        return
+        
+    user_id = msg.from_user.id
+    full_name = html.quote(msg.from_user.full_name)
+    
+    m = [
+        f"👋 Привет, {full_name}!",
+        f"Ваш Telegram ID: <code>{user_id}</code>",
+        "",
+        "Отправьте этот ID администратору или вставьте в панель управления, чтобы получать уведомления об ошибках."
+    ]
+    
+    await msg.answer("\n".join(m))
+    await state.set_state(states.user.UserMainMenu.menu)
+</file>
+
+<file path="aiogram_bot_template/models/base.py">
+import typing
+
+import orjson
+import pydantic
+from pydantic import ConfigDict
+
+
+def orjson_dumps(
+    v: typing.Any,
+    *,
+    default: typing.Callable[[typing.Any], typing.Any] | None,
+) -> str:
+    # orjson.dumps returns bytes, to match standard json.dumps we need to decode
+    return orjson.dumps(v, default=default).decode()
+
+
+class BaseModel(pydantic.BaseModel):
+    model_config = ConfigDict()
+</file>
+
+<file path="aiogram_bot_template/utils/connect_to_services.py">
+import asyncpg
+import redis.asyncio as redis
+import structlog
+import tenacity
+from tenacity import _utils  # noqa: PLC2701
+
+TIMEOUT_BETWEEN_ATTEMPTS = 2
+MAX_TIMEOUT = 30
+
+
+def before_log(retry_state: tenacity.RetryCallState) -> None:
+    if retry_state.outcome is None:
+        return
+    if retry_state.outcome.failed:
+        verb, value = "raised", retry_state.outcome.exception()
+    else:
+        verb, value = "returned", retry_state.outcome.result()
+    logger = retry_state.kwargs["logger"]
+    logger.info(
+        "Retrying %s in %s seconds as it %s %s",
+        _utils.get_callback_name(retry_state.fn),  # type: ignore[arg-type]
+        retry_state.next_action.sleep,  # type: ignore[union-attr]
+        verb,
+        value,
+        callback=_utils.get_callback_name(retry_state.fn),  # type: ignore[arg-type]
+        sleep=retry_state.next_action.sleep,  # type: ignore[union-attr]
+        verb=verb,
+        value=value,
+    )
+
+
+def after_log(retry_state: tenacity.RetryCallState) -> None:
+    logger = retry_state.kwargs["logger"]
+    logger.info(
+        "Finished call to %s after %s, this was the %s time calling it.",
+        _utils.get_callback_name(retry_state.fn),  # type: ignore[arg-type]
+        f"{retry_state.seconds_since_start:.2f}",
+        _utils.to_ordinal(retry_state.attempt_number),
+        callback=_utils.get_callback_name(retry_state.fn),  # type: ignore[arg-type]
+        time=retry_state.seconds_since_start,
+        attempt=_utils.to_ordinal(retry_state.attempt_number),
+    )
+
+
+@tenacity.retry(
+    wait=tenacity.wait_fixed(TIMEOUT_BETWEEN_ATTEMPTS),
+    stop=tenacity.stop_after_delay(MAX_TIMEOUT),
+    before_sleep=before_log,
+    after=after_log,
+)
+async def wait_postgres(
+    *,
+    logger: structlog.typing.FilteringBoundLogger,
+    dsn: str,
+) -> asyncpg.Pool:
+    db_pool = await asyncpg.create_pool(
+        dsn=dsn,
+        min_size=1,
+        max_size=3,
+    )
+    version = await db_pool.fetchrow("SELECT version() as ver;")
+    logger.debug("Connected to PostgreSQL.", version=version["ver"])
+    return db_pool
+
+
+@tenacity.retry(
+    wait=tenacity.wait_fixed(TIMEOUT_BETWEEN_ATTEMPTS),
+    stop=tenacity.stop_after_delay(MAX_TIMEOUT),
+    before_sleep=before_log,
+    after=after_log,
+)
+async def wait_redis_pool(  # noqa: PLR0913
+    *,
+    logger: structlog.typing.FilteringBoundLogger,
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    database: int,
+) -> redis.Redis:
+    redis_connection: redis.Redis = redis.Redis(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        db=database,
+        auto_close_connection_pool=True,
+        decode_responses=True,
+        protocol=3,
+        socket_timeout=10,  # limits any command to 10 seconds as per https://github.com/redis/redis-py/issues/722
+        socket_keepalive=True,  # tries to keep connection alive, not 100% guarantee
+    )
+    version = await redis_connection.info("server")
+    logger.debug("Connected to Redis.", version=version["redis_version"])
+    return redis_connection
+</file>
+
+<file path="docker-compose.yml">
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: your_secure_password
+      POSTGRES_DB: aiogram_bot
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    restart: always
+
+  backend:
+    build: . # Путь к вашей папке с Python кодом
+    restart: always
+    env_file: .env
+    depends_on:
+      - db
+      - redis
+    # Порт 8080 будет доступен внутри сети docker для Nginx
+
+  nginx:
+    image: nginx:latest
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    depends_on:
+      - backend 
+
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done'"
+</file>
+
+<file path="README.md">
+# aiogram-bot-template
+Template for creating scalable bots with aiogram
+</file>
+
+<file path="aiogram_bot_template/keyboards/default/basic.py">
+import aiogram.types
+
+from .consts import DefaultConstructor
+
+
+class BasicButtons(DefaultConstructor):
+    @staticmethod
+    def back() -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns = ["◀️Назад"]
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def cancel() -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns = ["🚫 Отмена"]
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def back_n_cancel() -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1, 1]
+        btns = ["◀️Назад", "🚫 Отмена"]
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def confirmation(
+        *,
+        add_back: bool = False,
+        add_cancel: bool = False,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = []
+        btns = []
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        schema.append(1)
+        btns.append("✅Подтвердить")
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def skip(
+        *,
+        add_back: bool = False,
+        add_cancel: bool = False,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns = ["▶️Пропустить"]
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def yes(
+        *,
+        add_back: bool = False,
+        add_cancel: bool = False,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns = ["✅Да"]
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def no(
+        *,
+        add_back: bool = False,
+        add_cancel: bool = False,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns = ["❌Нет"]
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def yes_n_no(
+        *,
+        add_back: bool = False,
+        add_cancel: bool = False,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [2]
+        btns = ["✅Да", "❌Нет"]
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        return BasicButtons._create_kb(btns, schema)
+
+    @staticmethod
+    def ask_for_users(  # noqa: PLR0913
+        text: str,
+        *,
+        request_id: int = 1,
+        user_is_bot: bool | None = False,
+        user_is_premium: bool | None = None,
+        max_quantity: int | None = 1,
+        request_name: bool | None = True,
+        request_username: bool | None = True,
+        request_photo: bool | None = True,
+        add_back: bool = False,
+        add_cancel: bool = True,
+    ) -> aiogram.types.ReplyKeyboardMarkup:
+        schema = [1]
+        btns: list[str | dict[str, str | aiogram.types.KeyboardButtonRequestUsers]] = [
+            {
+                "text": text,
+                "request_users": aiogram.types.KeyboardButtonRequestUsers(
+                    request_id=request_id,
+                    user_is_bot=user_is_bot,
+                    user_is_premium=user_is_premium,
+                    max_quantity=max_quantity,
+                    request_name=request_name,
+                    request_username=request_username,
+                    request_photo=request_photo,
+                ),
+            },
+        ]
+        if add_back:
+            schema.append(1)
+            btns.append("◀️Назад")
+        if add_cancel:
+            schema.append(1)
+            btns.append("🚫 Отмена")
+        return BasicButtons._create_kb(btns, schema)  # type: ignore[arg-type]
+</file>
+
+<file path="aiogram_bot_template/keyboards/inline/consts.py">
+from types import MappingProxyType
+
+from aiogram.filters.callback_data import CallbackData
+from aiogram.types import (
+    CallbackGame,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LoginUrl,
+    SwitchInlineQueryChosenChat,
+    WebAppInfo,
+)
+
+from aiogram_bot_template import exceptions
+from aiogram_bot_template.keyboards.keyboard_utils import schema_generator
+
+POSSIBLE_BUTTON_PROPERTIES_VALUES = (  # https://core.telegram.org/bots/api#inlinekeyboardbutton
+    str
+    | WebAppInfo
+    | LoginUrl
+    | SwitchInlineQueryChosenChat
+    | CallbackGame
+    | bool
+    | CallbackData  # aiogram callback factory
+)
+POSSIBLE_INPUT_ACTIONS_TYPES = dict[str, POSSIBLE_BUTTON_PROPERTIES_VALUES]
+
+
+class InlineConstructor:
+    aliases = MappingProxyType(
+        {
+            "cb": "callback_data",
+        },
+    )
+    required_properties = ("text",)
+    additional_properties = (
+        "callback_data",
+        "url",
+        "web_app",
+        "login_url",
+        "switch_inline_query",
+        "switch_inline_query_current_chat",
+        "callback_game",
+        "pay",
+    )
+    possible_properties = (*required_properties, *additional_properties)
+    max_additional_properties = 1
+    max_possible_properties = len(required_properties) + max_additional_properties
+
+    @staticmethod
+    def _create_kb(  # noqa: C901
+        actions: list[POSSIBLE_INPUT_ACTIONS_TYPES],
+        schema: list[int],
+    ) -> InlineKeyboardMarkup:
+        btns: list[InlineKeyboardButton] = []
+        # noinspection DuplicatedCode
+        for cur_action in actions:
+            data: dict[str, POSSIBLE_BUTTON_PROPERTIES_VALUES] = {}
+            for k, v in InlineConstructor.aliases.items():
+                if k in cur_action:
+                    cur_action[v] = cur_action[k]
+                    del cur_action[k]
+            for k in cur_action:
+                if k not in InlineConstructor.possible_properties:
+                    raise exceptions.UnknownKeyboardButtonPropertyError(
+                        unknown_property=k,
+                        property_value=cur_action[k],
+                        known_properties=InlineConstructor.possible_properties,
+                    )
+                if len(data) >= InlineConstructor.max_possible_properties:
+                    raise exceptions.TooManyArgsToCreateButtonError(
+                        provided_args=list(data.keys()),
+                        max_args_amount=InlineConstructor.max_possible_properties,
+                    )
+                data[k] = cur_action[k]
+            if not all(
+                added_property in data
+                for added_property in InlineConstructor.required_properties
+            ):
+                raise exceptions.NotEnoughArgsToCreateButtonError(
+                    provided_args=list(data.keys()),
+                    required_args=InlineConstructor.required_properties,
+                )
+            if isinstance(data["callback_data"], CallbackData):
+                data["callback_data"] = data["callback_data"].pack()
+            if "pay" in data:
+                if len(btns) != 0 and data["pay"]:
+                    raise exceptions.PaymentButtonMustBeFirstError
+                data["pay"] = cur_action["pay"]
+            btns.append(InlineKeyboardButton(**data))  # type:ignore[arg-type]
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=schema_generator.create_keyboard_layout(btns, schema),
+        )
+        return kb
+</file>
+
+<file path="aiogram_bot_template/middlewares/logging.py">
+import time
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
+from types import TracebackType
+from typing import Any
+
+import structlog.typing
+from aiogram import BaseMiddleware
+from aiogram.types import TelegramObject, Update
+
+HANDLED_STR = ["Unhandled", "Handled"]
+
+
+class UpdateLoggingContextManager:
+    def __init__(
+        self,
+        logger: structlog.typing.FilteringBoundLogger,
+        event: Update,
+    ) -> None:
+        self.event = event
+        self.logger = logger.bind(update_id=self.event.update_id)
+
+    def _fill_logger(self) -> None:  # noqa: PLR0915,PLR0912,C901
+        if self.event.callback_query:
+            c = self.event.callback_query
+            self.logger = self.logger.bind(
+                callback_query_id=c.id,
+                callback_data=c.data,
+                user_id=c.from_user.id,
+                inline_message_id=c.inline_message_id,
+                chat_instance=c.chat_instance,
+            )
+            if c.message is not None:
+                self.logger = self.logger.bind(
+                    message_id=c.message.message_id,
+                    chat_type=c.message.chat.type,
+                    chat_id=c.message.chat.id,
+                )
+        elif (
+            self.event.message
+            or self.event.edited_message
+            or self.event.channel_post
+            or self.event.edited_channel_post
+        ):
+            if self.event.message:
+                message = self.event.message
+            elif self.event.edited_message:
+                message = self.event.edited_message
+            elif self.event.channel_post:
+                message = self.event.channel_post
+            elif self.event.edited_channel_post:
+                message = self.event.edited_channel_post
+            else:
+                msg = "Unexpected entry in logging for event message"
+                raise RuntimeError(msg)
+            self.logger = self.logger.bind(
+                message_id=message.message_id,
+                chat_type=message.chat.type,
+                chat_id=message.chat.id,
+                date=message.date,
+                content_type=message.content_type,
+            )
+            if message.from_user is not None:
+                self.logger = self.logger.bind(user_id=message.from_user.id)
+            if message.sender_chat is not None:
+                self.logger = self.logger.bind(
+                    sender_chat_id=message.sender_chat.id,
+                )
+            if message.text:
+                self.logger = self.logger.bind(text=message.text)
+                if message.entities:
+                    self.logger = self.logger.bind(
+                        caption_entities=[
+                            i.model_dump(exclude_none=True, exclude_unset=True)
+                            for i in message.entities
+                        ],
+                    )
+            elif message.video:
+                self.logger = self.logger.bind(
+                    video_id=message.video.file_id,
+                    video_unique_id=message.video.file_unique_id,
+                )
+            elif message.photo:
+                best_photosize = max(message.photo, key=lambda x: x.width * x.height)
+                self.logger = self.logger.bind(
+                    photo_id=best_photosize.file_id,
+                    photo_unique_id=best_photosize.file_unique_id,
+                )
+            if message.caption:
+                self.logger = self.logger.bind(caption=message.caption)
+                if message.caption_entities:
+                    self.logger = self.logger.bind(
+                        caption_entities=[
+                            i.model_dump(exclude_none=True, exclude_unset=True)
+                            for i in message.caption_entities
+                        ],
+                    )
+        elif self.event.chat_join_request:
+            req = self.event.chat_join_request
+            self.logger = self.logger.bind(
+                chat_id=req.chat.id,
+                chat_type=req.chat.type,
+                user_id=req.from_user.id,
+                user_chat_id=req.user_chat_id,
+                date=req.date,
+                bio=req.bio,
+            )
+            if req.invite_link:
+                self.logger = self.logger.bind(
+                    invite_link=req.invite_link.model_dump(
+                        exclude_none=True,
+                        exclude_unset=True,
+                    ),
+                )
+        elif self.event.chat_member:
+            upd = self.event.chat_member
+            self.logger = self.logger.bind(
+                user_id=upd.from_user.id,
+                chat_id=upd.chat.id,
+                chat_type=upd.chat.type,
+                old_state=upd.old_chat_member.model_dump(
+                    exclude_none=True,
+                    exclude_unset=True,
+                ),
+                new_state=upd.new_chat_member.model_dump(
+                    exclude_none=True,
+                    exclude_unset=True,
+                ),
+                via_chat_folder_invite_link=bool(upd.via_chat_folder_invite_link),
+            )
+            if upd.invite_link:
+                self.logger = self.logger.bind(
+                    invite_link=upd.invite_link.model_dump(
+                        exclude_none=True,
+                        exclude_unset=True,
+                    ),
+                )
+        elif self.event.inline_query:
+            query = self.event.inline_query
+            self.logger = self.logger.bind(
+                query_id=query.id,
+                user_id=query.from_user.id,
+                query=query.query,
+                offset=query.offset,
+                chat_type=query.chat_type,
+                location=query.location,
+            )
+        elif self.event.my_chat_member:
+            upd = self.event.my_chat_member
+            self.logger = self.logger.bind(
+                user_id=upd.from_user.id,
+                chat_id=upd.chat.id,
+                chat_type=upd.chat.type,
+                old_state=upd.old_chat_member.model_dump(
+                    exclude_none=True,
+                    exclude_unset=True,
+                ),
+                new_state=upd.new_chat_member.model_dump(
+                    exclude_none=True,
+                    exclude_unset=True,
+                ),
+            )
+        elif self.event.poll:
+            poll = self.event.poll
+            self.logger = self.logger.bind(
+                poll_id=poll.id,
+                question=poll.question,
+                options=[
+                    i.model_dump(exclude_none=True, exclude_unset=True)
+                    for i in poll.options
+                ],
+                total_voter_count=poll.total_voter_count,
+                is_closed=bool(poll.is_closed),
+                is_anonymous=bool(poll.is_anonymous),
+                type=poll.type,
+                allows_multiple_answers=bool(poll.allows_multiple_answers),
+            )
+            if poll.correct_option_id:
+                self.logger = self.logger.bind(correct_option_id=poll.correct_option_id)
+            if poll.explanation:
+                self.logger = self.logger.bind(explanation=poll.explanation)
+                if poll.explanation_entities:
+                    self.logger = self.logger.bind(
+                        explanation_entities=[
+                            i.model_dump(exclude_none=True, exclude_unset=True)
+                            for i in poll.explanation_entities
+                        ],
+                    )
+            if poll.open_period:
+                self.logger = self.logger.bind(open_period=poll.open_period)
+            if poll.close_date:
+                self.logger = self.logger.bind(close_date=poll.close_date)
+
+    async def __aenter__(self) -> None:
+        self._started_processing_at = time.monotonic_ns()
+        self._fill_logger()
+        self.logger.debug(
+            "Received {event_type}",
+            extra={"event_type": self.event.event_type},
+        )
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> Any:
+        self.logger.bind(
+            process_result=True,
+            spent_time_ms=(
+                (time.monotonic_ns() - self._started_processing_at) * 1_000_000
+            ),
+        )
+        self.logger.info(
+            "Handled {event_type}",
+            extra={"event_type": self.event.event_type},
+        )
+
+
+class StructLoggingMiddleware(BaseMiddleware):
+    def __init__(
+        self,
+        logger: structlog.typing.FilteringBoundLogger,
+    ) -> None:
+        self.logger = logger
+        super().__init__()
+
+    async def __call__(
+        self,
+        handler: Callable[[Update, dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        _started_processing_at = time.monotonic_ns()
+        if not isinstance(event, Update):
+            msg = "StructLoggingMiddleware can only work with updates"
+            raise TypeError(msg)
+        self._bind_loggers(event, data)
+        async with UpdateLoggingContextManager(logger=self.logger, event=event):
+            handler_result = await handler(event, data)
+        return handler_result
+
+    def _bind_loggers(  # noqa: PLR6301
+        self,
+        event: Update,
+        data: dict[str, Any],
+    ) -> None:
+        update_id = event.update_id
+        for possible_logger_name in [
+            "business_logger",
+            "aiogram_logger",
+            "aiogram_session_logger",
+            "db_logger",
+            "cache_logger",
+        ]:
+            with suppress(Exception):  # Easier to ask for forgiveness than permission
+                data[possible_logger_name] = data[possible_logger_name].bind(
+                    update_id=update_id,
+                )
+</file>
+
+<file path="aiogram_bot_template/keyboards/default/consts.py">
+from collections.abc import Sequence
+from types import MappingProxyType
+
+from aiogram.types import (
+    KeyboardButton,
+    KeyboardButtonPollType,
+    KeyboardButtonRequestChat,
+    KeyboardButtonRequestUsers,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
+
+from aiogram_bot_template import exceptions
+from aiogram_bot_template.keyboards.keyboard_utils import schema_generator
+
+POSSIBLE_BUTTON_PROPERTIES_VALUES = (  # https://core.telegram.org/bots/api#keyboardbutton
+    str
+    | bool
+    | KeyboardButtonPollType
+    | KeyboardButtonRequestUsers
+    | KeyboardButtonRequestChat
+    | WebAppInfo
+)
+POSSIBLE_INPUT_ACTIONS_TYPES = str | dict[str, POSSIBLE_BUTTON_PROPERTIES_VALUES]
+
+
+class DefaultConstructor:
+    aliases = MappingProxyType(
+        {
+            "contact": "request_contact",
+            "location": "request_location",
+            "poll": "request_poll",
+        },
+    )
+    required_properties = ("text",)
+    additional_properties = (
+        "request_contact",
+        "request_location",
+        "request_poll",
+        "request_users",
+        "request_chat",
+        "web_app",
+    )
+    possible_properties = (*required_properties, *additional_properties)
+    max_additional_properties = 1
+    max_possible_properties = len(required_properties) + max_additional_properties
+
+    @staticmethod
+    def _create_kb(  # noqa: PLR0913
+        actions: Sequence[POSSIBLE_INPUT_ACTIONS_TYPES],
+        schema: Sequence[int],
+        *,
+        resize_keyboard: bool = True,
+        selective: bool = False,
+        one_time_keyboard: bool = False,
+        is_persistent: bool = True,
+    ) -> ReplyKeyboardMarkup:
+        btns: list[KeyboardButton] = []
+        # noinspection DuplicatedCode
+        for i in actions:
+            data: dict[str, POSSIBLE_BUTTON_PROPERTIES_VALUES] = {}
+            if isinstance(i, str):
+                data = {"text": i}
+            elif isinstance(i, dict):
+                cur_action: dict[str, POSSIBLE_BUTTON_PROPERTIES_VALUES] = {**i}
+                data = {}
+                for k, v in DefaultConstructor.aliases.items():
+                    if k in cur_action:
+                        cur_action[v] = cur_action[k]
+                        del cur_action[k]
+                for cur_action_k, cur_action_v in cur_action.items():
+                    if cur_action_k not in DefaultConstructor.possible_properties:
+                        raise exceptions.UnknownKeyboardButtonPropertyError(
+                            unknown_property=cur_action_k,
+                            property_value=cur_action_v,
+                            known_properties=DefaultConstructor.possible_properties,
+                        )
+                    if len(data) >= DefaultConstructor.max_possible_properties:
+                        raise exceptions.TooManyArgsToCreateButtonError(
+                            provided_args=list(data.keys()),
+                            max_args_amount=DefaultConstructor.max_possible_properties,
+                        )
+                    data[cur_action_k] = cur_action_v
+                if not all(
+                    added_property in data
+                    for added_property in DefaultConstructor.required_properties
+                ):
+                    raise exceptions.NotEnoughArgsToCreateButtonError(
+                        provided_args=list(data.keys()),
+                        required_args=DefaultConstructor.required_properties,
+                    )
+            else:
+                raise TypeError("unknown action type")  # noqa: TRY003, EM101
+            btns.append(KeyboardButton(**data))  # type:ignore[arg-type]
+        kb = ReplyKeyboardMarkup(
+            resize_keyboard=resize_keyboard,
+            selective=selective,
+            one_time_keyboard=one_time_keyboard,
+            is_persistent=is_persistent,
+            keyboard=schema_generator.create_keyboard_layout(btns, schema),
+        )
+        return kb
+</file>
+
+<file path="aiogram_bot_template/web_handlers/tg_updates.py">
+import secrets
+from typing import Any, TYPE_CHECKING
+
+import aiohttp.web
+import orjson
+from aiogram import Bot, Dispatcher, types
+from aiohttp import web
+
+from aiogram_bot_template.data import config
+
+if TYPE_CHECKING:
+    import aiojobs
+
+tg_updates_app = web.Application()
+
+
+async def process_update(
+    upd: types.Update,
+    bot: Bot,
+    dp: Dispatcher,
+    workflow_data: dict[str, Any],
+) -> None:
+
+    await dp.feed_webhook_update(bot, upd, **workflow_data)
+
+
+async def execute(req: web.Request) -> web.Response:
+    if not secrets.compare_digest(
+        req.headers.get("X-Telegram-Bot-Api-Secret-Token", ""),
+        config.MAIN_WEBHOOK_SECRET_TOKEN,
+    ):
+        raise aiohttp.web.HTTPNotFound
+    if not secrets.compare_digest(req.match_info["bot_id"], config.BOT_TOKEN):
+        raise aiohttp.web.HTTPNotFound
+
+    dp: Dispatcher = req.app["dp"]
+    scheduler: aiojobs.Scheduler = req.app["scheduler"]
+    if scheduler.pending_count > config.MAX_UPDATES_IN_QUEUE:
+        raise web.HTTPTooManyRequests
+    if scheduler.closed:
+        raise web.HTTPServiceUnavailable(reason="Closed queue")
+    await scheduler.spawn(
+        process_update(
+            types.Update(**(await req.json(loads=orjson.loads))),
+            req.app["bot"],
+            dp,
+            {"dp": dp},
+        ),
+    )
+
+    return web.Response()
+
+
+tg_updates_app.add_routes(
+    [web.post("/bot/{bot_id}", execute)],
+)
+</file>
+
+<file path="Dockerfile">
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_NO_INTERACTION=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install poetry
+
+COPY pyproject.toml poetry.lock* ./
+
+RUN poetry install --without dev --no-root
+
+COPY . .
+
+EXPOSE 8080
+
+CMD ["python", "-m", "aiogram_bot_template.bot"]
+</file>
+
+<file path="aiogram_bot_template/data/config.py">
+import subprocess  # noqa: S404
+from urllib import parse
+
+from environs import Env
+
+VERSION = (
+    subprocess.check_output(["git", "describe", "--always"])  # noqa: S607
+    .strip()
+    .decode()
+)
+
+env = Env()
+env.read_env()
+
+BOT_TOKEN: str = env.str("BOT_TOKEN")
+BOT_ID: str = BOT_TOKEN.split(":", maxsplit=1)[0]
+
+LOGGING_LEVEL: int = env.int("LOGGING_LEVEL", 10)
+
+USE_PG_LINK: bool = env.bool("USE_PG_LINK", False)
+
+if USE_PG_LINK:
+    PG_LINK: str = env.str("PG_LINK")
+else:
+    PG_HOST: str = env.str("PG_HOST")
+    PG_PORT: int = env.int("PG_PORT")
+    PG_USER: str = env.str("PG_USER")
+    PG_PASSWORD: str = env.str("PG_PASSWORD")
+    PG_DATABASE: str = env.str("PG_DATABASE")
+    PG_SSL: str = env.str("PG_SSL", "require")
+    PG_LINK = parse.urlunsplit(
+        (
+            "postgresql",
+            f"{PG_HOST}:{PG_PORT}",
+            "",
+            parse.urlencode(
+                query={
+                    "user": PG_USER,
+                    "password": PG_PASSWORD,
+                    "sslmode": PG_SSL,
+                    "database": PG_DATABASE,
+                },
+                doseq=True,
+            ),
+            "",
+        ),
+    )
+
+FSM_HOST: str = env.str("FSM_HOST")
+FSM_PORT: int = env.int("FSM_PORT")
+FSM_PASSWORD: str = env.str("FSM_PASSWORD")
+
+USE_CACHE: bool = env.bool("USE_CACHE", False)
+
+if USE_CACHE:
+    CACHE_HOST: str = env.str("CACHE_HOST")
+    CACHE_PORT: int = env.int("CACHE_PORT")
+    CACHE_USERNAME: str = env.str("CACHE_USERNAME")
+    CACHE_PASSWORD: str = env.str("CACHE_PASSWORD")
+
+USE_WEBHOOK: bool = env.bool("USE_WEBHOOK", False)
+
+if USE_WEBHOOK:
+    MAIN_WEBHOOK_ADDRESS: str = env.str("MAIN_WEBHOOK_ADDRESS")
+    MAIN_WEBHOOK_SECRET_TOKEN: str = env.str("MAIN_WEBHOOK_SECRET_TOKEN")
+
+    MAIN_WEBHOOK_LISTENING_HOST: str = env.str("MAIN_WEBHOOK_LISTENING_HOST")
+    MAIN_WEBHOOK_LISTENING_PORT: int = env.int("MAIN_WEBHOOK_LISTENING_PORT")
+
+    MAX_UPDATES_IN_QUEUE: int = env.int("MAX_UPDATES_IN_QUEUE", 100)
+
+USE_CUSTOM_API_SERVER: bool = env.bool("USE_CUSTOM_API_SERVER", False)
+
+if USE_CUSTOM_API_SERVER:
+    CUSTOM_API_SERVER_IS_LOCAL: bool = env.bool("CUSTOM_API_SERVER_IS_LOCAL")
+    CUSTOM_API_SERVER_BASE: str = env.str("CUSTOM_API_SERVER_BASE")
+    CUSTOM_API_SERVER_FILE: str = env.str("CUSTOM_API_SERVER_FILE")
+
+DROP_PREVIOUS_UPDATES: bool = env.bool("DROP_PREVIOUS_UPDATES", False)
+
+MAIN_CHANNEL: str = env.str("MAIN_CHANNEL", None) # Например: @my_channel или -1001234567
+</file>
+
+<file path="aiogram_bot_template/bot.py">
+import asyncio
+import sys
+from typing import TYPE_CHECKING
+
+import aiojobs
+import aiohttp  # <--- ДОБАВИТЬ ЭТУ СТРОКУ 
+import aiohttp_cors # Импортируйте
+import orjson
+import tenacity
+from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.client.telegram import TelegramAPIServer
+from aiogram.fsm.storage.redis import DefaultKeyBuilder, RedisStorage
+from aiohttp import web
+from redis.asyncio import Redis
+
+from aiogram_bot_template import handlers, utils, web_handlers
+from aiogram_bot_template.data import config
+from aiogram_bot_template.middlewares import StructLoggingMiddleware
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler # Добавить импорт
+from aiogram_bot_template.web_handlers import external_api # Добавить импорт
+from aiogram_bot_template.services.kb_poller import check_updates # Добавить импорт
+from aiogram_bot_template.utils.auth import hash_password # Убедитесь, что путь верный
+
+if TYPE_CHECKING:
+    import asyncpg
+    import structlog
+    from aiogram.client.session.aiohttp import AiohttpSession
+
+
+async def create_db_connections(dp: Dispatcher) -> None:
+    logger: structlog.typing.FilteringBoundLogger = dp["business_logger"]
+
+    logger.debug("Connecting to PostgreSQL", db="main")
+    try:
+        db_pool = await utils.connect_to_services.wait_postgres(
+            logger=dp["db_logger"],
+            dsn=config.PG_LINK,
+        )
+    except tenacity.RetryError:
+        logger.exception("Failed to connect to PostgreSQL", db="main")
+        sys.exit(1)
+    else:
+        logger.debug("Succesfully connected to PostgreSQL", db="main")
+    dp["db_pool"] = db_pool
+
+    async with db_pool.acquire() as conn:
+
+                # 1. СИСТЕМНЫЕ ТАБЛИЦЫ (Админка и Каналы)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS admin_users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL
+            );
+        """)
+
+        # 1. Создаем таблицу каналов (нужна для связи)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS channels (
+                id SERIAL PRIMARY KEY,
+                title TEXT,
+                username TEXT,
+                chat_id TEXT UNIQUE NOT NULL,
+                is_default BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # 2. Создаем таблицу ботов с полем username
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS bots_managed (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                token TEXT UNIQUE NOT NULL,
+                username TEXT, -- Новое поле
+                is_active BOOLEAN DEFAULT TRUE,
+                channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # 3. АВТО-РЕГИСТРАЦИЯ встроенного бота
+        # Чтобы получить username, создаем временный объект Bot
+        async with Bot(token=config.BOT_TOKEN) as temp_bot:
+            try:
+                me = await temp_bot.get_me()
+                bot_username = f"@{me.username}"
+            except Exception:
+                bot_username = "@unknown_bot"
+
+        # 3. ВОРКЕРЫ (Наблюдатели)
+        # Сначала создаем саму таблицу воркеров
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_watches (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT DEFAULT 0,
+                name TEXT,
+                original_url TEXT,
+                api_url TEXT,
+                last_car_seq TEXT,
+                check_interval INTEGER DEFAULT 60,
+                is_active BOOLEAN DEFAULT TRUE,
+                last_run_at TIMESTAMPTZ,
+                channel_id INTEGER REFERENCES channels(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+        # 4. ИСТОРИЯ ПРОСМОТРОВ (Чтобы не дублировать авто)
+        # Оптимизированный индекс по (watch_id, car_history_seq)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS kb_seen_cars (
+                watch_id INTEGER NOT NULL REFERENCES kb_watches(id) ON DELETE CASCADE,
+                car_history_seq TEXT NOT NULL,
+                car_seq TEXT NOT NULL,
+                seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY (watch_id, car_history_seq)
+            );
+        """)
+
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS notification_users (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                username TEXT,
+                chat_id TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            );
+        """)
+
+
+        # Вставляем или обновляем данные основного бота
+        await conn.execute("""
+            INSERT INTO bots_managed (name, token, username, is_active)
+            VALUES ($1, $2, $3, TRUE)
+            ON CONFLICT (token) DO UPDATE 
+            SET username = EXCLUDED.username, is_active = TRUE;
+        """, "Main Bot (Env)", config.BOT_TOKEN, bot_username)
+
+
+                # 2. РЕЗОЛВИНГ ДАННЫХ ИЗ ENV (Бот и Канал)
+        main_channel_db_id = None
+        async with Bot(token=config.BOT_TOKEN) as temp_bot:
+            # Получаем данные основного бота
+            me = await temp_bot.get_me()
+            bot_username = f"@{me.username}"
+
+            # Получаем данные канала из ENV, если он указан
+            if config.MAIN_CHANNEL:
+                try:
+                    chat = await temp_bot.get_chat(config.MAIN_CHANNEL)
+                    # Сохраняем/обновляем канал в БД
+                    channel_row = await conn.fetchrow("""
+                        INSERT INTO channels (title, username, chat_id, is_default)
+                        VALUES ($1, $2, $3, TRUE)
+                        ON CONFLICT (chat_id) DO UPDATE 
+                        SET title = EXCLUDED.title, username = EXCLUDED.username
+                        RETURNING id
+                    """, chat.title, f"@{chat.username}" if chat.username else "private", str(chat.id))
+                    main_channel_db_id = channel_row['id']
+                except Exception as e:
+                    dp["aiogram_logger"].error(f"Could not resolve MAIN_CHANNEL: {e}")
+
+        # 3. РЕГИСТРАЦИЯ/ОБНОВЛЕНИЕ основного бота
+        await conn.execute("""
+            INSERT INTO bots_managed (name, token, username, is_active, channel_id)
+            VALUES ($1, $2, $3, TRUE, $4)
+            ON CONFLICT (token) DO UPDATE 
+            SET username = EXCLUDED.username, 
+                channel_id = COALESCE(EXCLUDED.channel_id, bots_managed.channel_id),
+                is_active = TRUE;
+        """, "Main Bot (Env)", config.BOT_TOKEN, bot_username, main_channel_db_id)
+
+
+        # --- АВТОМАТИЧЕСКОЕ СОЗДАНИЕ АДМИНА ---
+        # Проверяем, есть ли вообще пользователи в таблице
+        admin_count = await conn.fetchval("SELECT COUNT(*) FROM admin_users")
+        
+        if admin_count == 0:
+            default_username = "admin"
+            default_password = "admin"
+            # Хешируем пароль через нашу функцию (использует bcrypt)
+            hashed_pw = hash_password(default_password)
+            
+            await conn.execute(
+                "INSERT INTO admin_users (username, password_hash) VALUES ($1, $2)",
+                default_username, hashed_pw
+            )
+            dp["aiogram_logger"].info("Default admin user created (admin/admin)")
+        # ---------------------------------------
+            
+    # --- ОСТАЛЬНАЯ ЧАСТЬ (REDIS И СЕССИИ) ---
+    if config.USE_CACHE:
+        logger.debug("Connecting to Redis")
+        try:
+            redis_pool = await utils.connect_to_services.wait_redis_pool(
+                logger=dp["cache_logger"],
+                host=config.CACHE_HOST,
+                username=config.CACHE_USERNAME,
+                password=config.CACHE_PASSWORD,
+                port=config.CACHE_PORT,
+                database=0,
+            )
+        except tenacity.RetryError:
+            logger.exception("Failed to connect to Redis")
+            sys.exit(1)
+        else:
+            logger.debug("Succesfully connected to Redis")
+        dp["cache_pool"] = redis_pool
+
+    # Сессии для aiogram
+    dp["temp_bot_cloud_session"] = utils.smart_session.SmartAiogramAiohttpSession(
+        json_loads=orjson.loads,
+        logger=dp["aiogram_session_logger"],
+    )
+    if config.USE_CUSTOM_API_SERVER:
+        dp["temp_bot_local_session"] = utils.smart_session.SmartAiogramAiohttpSession(
+            api=TelegramAPIServer(
+                base=config.CUSTOM_API_SERVER_BASE,
+                file=config.CUSTOM_API_SERVER_FILE,
+                is_local=config.CUSTOM_API_SERVER_IS_LOCAL,
+            ),
+            json_loads=orjson.loads,
+            logger=dp["aiogram_session_logger"],
+        )
+
+
+async def close_db_connections(dp: Dispatcher) -> None:
+    if "temp_bot_cloud_session" in dp.workflow_data:
+        temp_bot_cloud_session: AiohttpSession = dp["temp_bot_cloud_session"]
+        await temp_bot_cloud_session.close()
+    if "temp_bot_local_session" in dp.workflow_data:
+        temp_bot_local_session: AiohttpSession = dp["temp_bot_local_session"]
+        await temp_bot_local_session.close()
+    if "db_pool" in dp.workflow_data:
+        db_pool: asyncpg.Pool = dp["db_pool"]
+        await db_pool.close()
+    if "cache_pool" in dp.workflow_data:
+        cache_pool: Redis = dp["cache_pool"]
+        await cache_pool.close()
+
+
+def setup_handlers(dp: Dispatcher) -> None:
+    dp.include_router(handlers.user.prepare_router())
+
+
+def setup_middlewares(dp: Dispatcher) -> None:
+    dp.update.outer_middleware(StructLoggingMiddleware(logger=dp["aiogram_logger"]))
+
+
+def setup_logging(dp: Dispatcher) -> None:
+    dp["aiogram_logger"] = utils.logging.setup_logger().bind(type="aiogram")
+    dp["db_logger"] = utils.logging.setup_logger().bind(type="db")
+    dp["cache_logger"] = utils.logging.setup_logger().bind(type="cache")
+    dp["business_logger"] = utils.logging.setup_logger().bind(type="business")
+
+
+async def setup_aiogram(dp: Dispatcher) -> None:
+    setup_logging(dp)
+    logger = dp["aiogram_logger"]
+    logger.debug("Configuring aiogram")
+    await create_db_connections(dp)
+    setup_handlers(dp)
+    setup_middlewares(dp)
+    logger.info("Configured aiogram")
+
+
+async def aiohttp_on_startup(app: web.Application) -> None:
+    dp: Dispatcher = app["dp"]
+    
+    # 1. Получаем пул БД из диспетчера
+    # Важно: убедитесь, что create_db_connections уже выполнился к этому моменту.
+    # В текущей архитектуре aiogram_on_startup_webhook вызывается ПЕРЕД этим, так что пул уже должен быть в dp["db_pool"]
+    # Но надежнее взять его из workflow_data, если он там есть, или из dp
+    db_pool = dp.get("db_pool")
+    
+    # 2. Создаем нормальную aiohttp сессию для парсинга
+    parsing_session = aiohttp.ClientSession()
+    
+    # Прокидываем во все приложения
+    apps_to_configure = [app, *app._subapps]
+    for _app in apps_to_configure:
+        _app["db_pool"] = db_pool
+        _app["parsing_session"] = parsing_session  # Сохраняем под новым именем
+
+    # Регистрируем закрытие сессии при выключении
+    async def close_session(app):
+        await parsing_session.close()
+    app.on_cleanup.append(close_session)
+
+    workflow_data = {"app": app, "dispatcher": dp}
+    if "bot" in app:
+        workflow_data["bot"] = app["bot"]
+    await dp.emit_startup(**workflow_data)
+
+
+async def aiohttp_on_shutdown(app: web.Application) -> None:
+    dp: Dispatcher = app["dp"]
+    for i in [app, *app._subapps]:  # noqa: SLF001 # dirty
+        if "scheduler" in i:
+            scheduler: aiojobs.Scheduler = i["scheduler"]
+            scheduler._closed = True  # noqa: SLF001
+            while scheduler.pending_count != 0:
+                dp["aiogram_logger"].info(
+                    f"Waiting for {scheduler.pending_count} tasks to complete",
+                )
+                await asyncio.sleep(1)
+    workflow_data = {"app": app, "dispatcher": dp}
+    if "bot" in app:
+        workflow_data["bot"] = app["bot"]
+    await dp.emit_shutdown(**workflow_data)
+
+
+async def aiogram_on_startup_webhook(dispatcher: Dispatcher, bot: Bot) -> None:
+    await setup_aiogram(dispatcher)
+    webhook_logger = dispatcher["aiogram_logger"].bind(
+        webhook_url=config.MAIN_WEBHOOK_ADDRESS,
+    )
+    webhook_logger.debug("Configuring webhook")
+    await bot.set_webhook(
+        url=config.MAIN_WEBHOOK_ADDRESS.format(
+            token=config.BOT_TOKEN,
+            bot_id=config.BOT_TOKEN.split(":")[0],
+        ),
+        allowed_updates=dispatcher.resolve_used_update_types(),
+        secret_token=config.MAIN_WEBHOOK_SECRET_TOKEN,
+    )
+    webhook_logger.info("Configured webhook")
+
+
+async def aiogram_on_shutdown_webhook(dispatcher: Dispatcher, bot: Bot) -> None:
+    dispatcher["aiogram_logger"].debug("Stopping webhook")
+    await close_db_connections(dispatcher)
+    await bot.session.close()
+    await dispatcher.storage.close()
+    dispatcher["aiogram_logger"].info("Stopped webhook")
+
+
+async def aiohttp_on_startup(app: web.Application) -> None:
+    dp: Dispatcher = app["dp"]
+    bot: Bot = app["bot"]
+    
+    # 1. СНАЧАЛА запускаем стартап диспетчера. 
+    # Это вызовет aiogram_on_startup_webhook -> setup_aiogram -> create_db_connections
+    workflow_data = {"app": app, "dispatcher": dp, "bot": bot}
+    await dp.emit_startup(**workflow_data)
+    
+    # 2. ТЕПЕРЬ пул точно создан и лежит в dp["db_pool"]
+    db_pool = dp.get("db_pool")
+    
+    # 3. Создаем сессию для парсинга и кладем в app
+    parsing_session = aiohttp.ClientSession()
+    
+    # Раздаем ссылки всем под-приложениям
+    for _app in [app, *app._subapps]:
+        _app["db_pool"] = db_pool
+        _app["parsing_session"] = parsing_session
+
+    # Не забываем закрыть сессию при выходе
+    async def close_session(app):
+        await parsing_session.close()
+    app.on_cleanup.append(close_session)
+
+async def aiogram_on_shutdown_polling(dispatcher: Dispatcher, bot: Bot) -> None:
+    dispatcher["aiogram_logger"].debug("Stopping polling")
+    await close_db_connections(dispatcher)
+    await bot.session.close()
+    await dispatcher.storage.close()
+    dispatcher["aiogram_logger"].info("Stopped polling")
+
+
+async def setup_aiohttp_app(bot: Bot, dp: Dispatcher) -> web.Application:
+    scheduler = aiojobs.Scheduler()
+    app = web.Application()
+    
+    # --- НОВЫЙ КОД: Саб-приложение для внешнего API ---
+    api_app = web.Application()
+    api_app.add_routes(external_api.routes)
+    # Передаем зависимости в api_app
+    api_app["bot"] = bot
+    api_app["dp"] = dp
+    # Пул БД будет доступен, так как мы его прокинем ниже
+
+    # Настройка CORS
+    cors = aiohttp_cors.setup(app, defaults={
+        "*": aiohttp_cors.ResourceOptions(
+            allow_credentials=True,
+            expose_headers="*",
+            allow_headers="*",
+            allow_methods="*",
+        )
+    })
+    
+    subapps: list[tuple[str, web.Application]] = [
+        ("/tg/webhooks/", web_handlers.tg_updates_app),
+        ("/api/", api_app), # Подключаем наш API по пути /api/
+    ]
+    # --------------------------------------------------
+
+    for prefix, subapp in subapps:
+        subapp["bot"] = bot
+        subapp["dp"] = dp
+        subapp["scheduler"] = scheduler
+        app.add_subapp(prefix, subapp)
+
+    # Применяем CORS ко всем роутам API
+    for route in list(api_app.router.routes()):
+        cors.add(route)
+        
+    app["bot"] = bot
+    app["dp"] = dp
+    app["scheduler"] = scheduler
+    app.on_startup.append(aiohttp_on_startup)
+    app.on_shutdown.append(aiohttp_on_shutdown)
+    return app
+
+
+def main() -> None:
+    aiogram_session_logger = utils.logging.setup_logger().bind(type="aiogram_session")
+
+    if config.USE_CUSTOM_API_SERVER:
+        session = utils.smart_session.SmartAiogramAiohttpSession(
+            api=TelegramAPIServer(
+                base=config.CUSTOM_API_SERVER_BASE,
+                file=config.CUSTOM_API_SERVER_FILE,
+                is_local=config.CUSTOM_API_SERVER_IS_LOCAL,
+            ),
+            json_loads=orjson.loads,
+            logger=aiogram_session_logger,
+        )
+    else:
+        session = utils.smart_session.SmartAiogramAiohttpSession(
+            json_loads=orjson.loads,
+            logger=aiogram_session_logger,
+        )
+    bot = Bot(
+        config.BOT_TOKEN,
+        session=session,
+        default=DefaultBotProperties(parse_mode="HTML"),
+    )
+
+    dp = Dispatcher(
+        storage=RedisStorage(
+            redis=Redis(
+                host=config.FSM_HOST,
+                password=config.FSM_PASSWORD,
+                port=config.FSM_PORT,
+                db=0,
+            ),
+            key_builder=DefaultKeyBuilder(with_bot_id=True),
+        ),
+    )
+    dp["aiogram_session_logger"] = aiogram_session_logger
+    
+    scheduler = AsyncIOScheduler()
+
+    async def run_check():
+        # Проверяем, подключена ли БД. В режиме Webhook данные могут быть в app, а не в workflow_data напрямую при старте,
+        # но dp["db_pool"] мы прокинули в aiohttp_on_startup.
+        # Безопаснее брать из workflow_data, если доступно, или проверять наличие.
+        pool = dp.get("db_pool")
+        if pool:
+            # Создаем сессию с таймаутом, чтобы она не висела вечно
+            timeout = aiohttp.ClientTimeout(total=240) 
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                try:
+                    await check_updates(bot, pool, session)
+                except Exception as e:
+                    pass
+                # Даем немного времени на закрытие соединений внутри контекста
+                await asyncio.sleep(1)
+
+    # Добавляем задачу
+    scheduler.add_job(
+        run_check,
+        "interval",
+        seconds=10,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=30,
+    )
+
+    # === ВАЖНОЕ ИСПРАВЛЕНИЕ ===
+    # Создаем функцию запуска планировщика
+    async def on_startup_scheduler():
+        scheduler.start()
+    
+    # Регистрируем её, чтобы она запустилась КОГДА бот уже начнет работу
+    dp.startup.register(on_startup_scheduler)
+    # ==========================
+
+    if config.USE_WEBHOOK:
+        dp.startup.register(aiogram_on_startup_webhook)
+        dp.shutdown.register(aiogram_on_shutdown_webhook)
+        
+        # Мы создаем цикл событий вручную, чтобы контролировать его
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Создаем приложение
+        app = loop.run_until_complete(setup_aiohttp_app(bot, dp))
+        
+        # Запускаем сервер
+        web.run_app(
+            app,
+            handle_signals=True,
+            host=config.MAIN_WEBHOOK_LISTENING_HOST,
+            port=config.MAIN_WEBHOOK_LISTENING_PORT,
+        )
+    else:
+        dp.startup.register(aiogram_on_startup_polling)
+        dp.shutdown.register(aiogram_on_shutdown_polling)
+        asyncio.run(dp.start_polling(bot))
+
+
+if __name__ == "__main__":
+    main()
+</file>
+
+<file path="pyproject.toml">
+[project]
+name = "aiogram-bot-template"
+description = "Template for creating scalable bots with aiogram"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Forden", email = "24463229+Forden@users.noreply.github.com" }
+]
+maintainers = [
+    { name = "Forden", email = "24463229+Forden@users.noreply.github.com" }
+]
+readme = "README.md"
+packages = [{ include = "aiogram_bot_template" }]
+dynamic = ["version", "dependencies"]
+
+[project.urls]
+homepage = "https://github.com/Forden/aiogram-bot-template"
+repository = "https://github.com/Forden/aiogram-bot-template"
+
+[project.scripts]
+aiogram_bot_template = "aiogram_bot_template.bot:main"
+
+[tool.poetry]
+requires-poetry = ">=2.0"
+package-mode = false
+version = "1.0"
+
+[tool.poetry.requires-plugins]
+poetry-plugin-export = ">=1.8"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+aiogram = "^3"
+environs = "^14"
+redis = "^6"
+asyncpg = "0.30.0"
+pydantic = "^2"
+structlog = "25.4.0"
+aiojobs = "^1"
+orjson = "^3.10"
+tenacity = "^9"
+pytz = "^2025"
+aiohttp = "~3"
+arrow = "^1"
+apscheduler = "^3.11.2"
+aiohttp-cors = "^0.8.1"
+pyjwt = "^2.11.0"
+passlib = {extras = ["bcrypt"], version = "^1.7.4"}
+
+[tool.poetry.group.dev]
+optional = true
+
+[tool.poetry.group.dev.dependencies]
+mypy = "^1.9.0"
+black = { extras = ["d"], version = "^25" }
+ruff = "^0.12"
+isort = "~6"
+types-pytz = "^2025"
+deptry = "0.23.0"
+pip-audit = "^2"
+
+[tool.black]
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+py_version = 310
+force_alphabetical_sort_within_sections = true
+group_by_package = true
+
+[tool.mypy]
+python_version = "3.10"
+files = "bot.py"
+plugins = "pydantic.mypy"
+warn_unused_configs = true
+ignore_missing_imports = false
+follow_imports_for_stubs = true
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+warn_unreachable = true
+strict_equality = true
+strict_bytes = true
+extra_checks = true
+show_error_context = true
+show_error_code_links = true
+show_error_end = true
+show_error_codes = true
+pretty = true
+namespace_packages = true
+show_absolute_path = true
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true
+
+[tool.ruff]
+target-version = "py310"
+preview = true
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "E501", # line too long, controlled by black
+    "ANN401", # attempt to replace mypy, ignored in favor of mypy
+    "RET504", # opinionated
+    "PLC0414", # breaks mypy unused imports
+    "SIM108", # forces to use ternary operator
+    "D", # unnecessary
+    "I", # unnecessary
+    "CPY001"# unnecessary
+]
+unfixable = ["B"]
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+</file>
+
+</files>
