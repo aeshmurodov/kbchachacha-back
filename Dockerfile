@@ -1,27 +1,37 @@
-# Используем стабильную версию Python
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию в контейнере
+# Настройки Python и Poetry
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    POETRY_VERSION=1.8.2 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    POETRY_NO_INTERACTION=1
+
+# Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости (нужны для сборки некоторых библиотек Python)
+# Устанавливаем системные зависимости (часто нужны для сборки asyncpg и других пакетов)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Копируем файл зависимостей
-COPY requirements.txt .
+# Устанавливаем Poetry
+RUN pip install "poetry==$POETRY_VERSION"
 
-# Устанавливаем зависимости
-RUN pip install --no-cache-dir -r requirements.txt
+# Сначала копируем ТОЛЬКО файлы зависимостей.
+# Это позволяет Docker закешировать шаг установки зависимостей, 
+# если в pyproject.toml / poetry.lock ничего не менялось.
+COPY pyproject.toml poetry.lock* ./
 
-# Копируем весь код приложения в контейнер
+# Устанавливаем зависимости (без dev-зависимостей, только прод)
+RUN poetry install --without dev --no-root
+
+# Теперь копируем весь остальной код приложения
 COPY . .
 
-# Открываем порт, который указан в вашем .env (MAIN_WEBHOOK_LISTENING_PORT)
+# Открываем порт для вебхуков
 EXPOSE 8080
 
-# Команда для запуска бота
-# Замените main.py на имя вашего главного файла (например, app.py или run.py)
-CMD ["python", "-u", "main.py"]
+# Запускаем бота (замените main.py на ваш главный файл)
+CMD ["python", "main.py"]
