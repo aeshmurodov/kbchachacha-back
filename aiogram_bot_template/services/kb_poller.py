@@ -180,7 +180,7 @@ async def check_updates(bot: Bot, db_pool, session: aiohttp.ClientSession):
                     logger.error(f"Watcher {watch['id']} не привязан к каналу или канал удален")
                     continue
 
-                data = await fetch_cars(session, watch["api_url"])
+                data = await fetch_cars(session, watch["api_url"], max_pages=3)
 
                 if not data or "list" not in data or not data["list"]:
                     logger.info(
@@ -219,6 +219,13 @@ async def check_updates(bot: Bot, db_pool, session: aiohttp.ClientSession):
                         is_first_run = await conn.fetchval(
                             "SELECT NOT EXISTS (SELECT 1 FROM kb_seen_cars WHERE watch_id = $1)",
                             watch_id,
+                        )
+
+                        logger.info(
+                            "KB first run status",
+                            watch_id=watch_id,
+                            user_id=watch.get("user_id"),
+                            is_first_run=bool(is_first_run),
                         )
 
                         if is_first_run:

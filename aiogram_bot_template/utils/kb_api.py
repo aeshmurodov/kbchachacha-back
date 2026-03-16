@@ -115,8 +115,6 @@ async def fetch_cars(
         "Accept": "application/json",
     }
 
-    max_pages = 10
-
     for page_num in range(max_pages):
         params: list[tuple[str, str]] = []
         params.extend(filtered_pairs)
