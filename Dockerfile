@@ -25,7 +25,7 @@ RUN pip install "poetry==$POETRY_VERSION"
 COPY pyproject.toml poetry.lock* ./
 
 # Устанавливаем зависимости (без dev-зависимостей, только прод)
-RUN poetry install --without dev --no-root
+RUN poetry install
 
 # Теперь копируем весь остальной код приложения
 COPY . .
