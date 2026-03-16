@@ -8,7 +8,7 @@ import structlog
 
 logger = structlog.get_logger()
 
-def convert_list_to_api(list_url: str, page: int = 1, page_size: int = 30) -> str:
+def convert_list_to_api(list_url: str, page: int = 1, page_size: int = 300) -> str:
     base_api = "https://m.kbchachacha.com/public/web/search/infinitySearch.json"
     
     parsed = urllib.parse.urlparse(list_url)
